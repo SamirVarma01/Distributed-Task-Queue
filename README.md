@@ -82,10 +82,13 @@ python -m venv .venv && .venv/bin/pip install -r requirements.txt -r requirement
 
 ```sh
 scripts/run_bench_matrix.sh                    # 10000 noop tasks at 1, 5 and 10 workers
+WORKER_COUNTS=10 RATES="430 687" scripts/run_bench_matrix.sh --duration 60   # open-loop latency at fixed rates
 python scripts/bench.py --tasks 10000 --task sleep_ms --sleep-ms 10   # one run against the current stack
 ```
 
-`bench.py` submits the tasks through `POST /tasks/batch`, waits until all of them finish, and computes throughput and latency from the tasks' `created_at`, `started_at` and `finished_at` timestamps in MySQL. Each run writes `bench/results/<label>.json` (with the commit, CPU and Docker resources it ran on) and adds a row to `bench/results/summary.md`. It is a burst benchmark: every task is submitted at once, so latency includes time spent in the backlog. The metric definitions are at the top of `scripts/bench.py`.
+`bench.py` submits the tasks through `POST /tasks/batch`, waits until all of them finish, and computes throughput and latency from the tasks' `created_at`, `started_at` and `finished_at` timestamps in MySQL. Each run writes `bench/results/<label>.json` (with the commit, CPU and Docker resources it ran on), and `bench/results/summary.md` is regenerated from all result files.
+
+There are two modes. A **burst** run (the default) submits every task at once to measure maximum throughput, so its latency includes time spent in the backlog. A **rate** run (`--rate R --duration S`) is open loop: it submits R tasks/s on a fixed schedule whether or not earlier tasks have finished, which shows latency at a given load. It also records how far behind schedule the client fell (`submit_lag_ms`). The metric definitions are at the top of `scripts/bench.py`.
 
 The matrix script runs `docker compose down -v` before each run, which **deletes the stack's data**. Both scripts need the dev requirements (`pip install -r requirements-dev.txt`).
 

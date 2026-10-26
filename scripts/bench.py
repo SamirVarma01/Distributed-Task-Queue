@@ -1,14 +1,21 @@
 """Benchmark DTQ end to end. With the stack running (docker compose up -d):
 
-    python scripts/bench.py --tasks 10000 --task noop --label my-run
+    python scripts/bench.py --tasks 10000 --task noop --label my-run       # burst
+    python scripts/bench.py --rate 400 --duration 60 --label my-rate-run    # open loop
 
-Submits the tasks through POST /tasks/batch, with several batches in flight so the
-client is not the bottleneck, and waits until every one reaches a terminal state. Then
-it reads their timestamps from MySQL and writes bench/results/<label>.json and a row in
-bench/results/summary.md.
+Tasks are submitted through POST /tasks/batch. The script waits until every one reaches
+a terminal state, reads their timestamps from MySQL, writes bench/results/<label>.json
+and regenerates bench/results/summary.md from all result files.
 
-This is a burst benchmark: all tasks are submitted as fast as possible, so latency and
-queue wait include the time a task spends in the backlog behind the others.
+Modes:
+  burst (default)  all --tasks are submitted as fast as possible, with several batches
+                   in flight. Measures maximum throughput; latency and queue wait include
+                   the time a task spends in the backlog behind the others.
+  rate (--rate R)  open loop: R tasks/s for --duration seconds, sent as a small batch
+                   every --tick-ms whether or not earlier requests or tasks have finished.
+                   Measures latency at a given load. submit_lag_ms is how late each
+                   request was sent relative to its schedule; if it is large, the client
+                   or API could not sustain the rate and the run does not show that load.
 
 Definitions (all timestamps come from the tasks table):
   wall time     last finished_at - first created_at
@@ -37,9 +44,10 @@ from sqlalchemy import bindparam, create_engine, text
 ROOT = Path(__file__).resolve().parent.parent
 RESULTS = ROOT / "bench" / "results"
 SUMMARY_HEADER = (
-    "| label | task | workers | tasks | wall (s) | throughput (tasks/s) "
-    "| latency p50 / p95 / p99 (ms) | queue wait p50 / p95 (ms) | run p50 (ms) | not succeeded | commit |\n"
-    "|---|---|---|---|---|---|---|---|---|---|---|\n"
+    "| label | mode | task | workers | tasks | rate target / achieved (tasks/s) | wall (s) "
+    "| throughput (tasks/s) | latency p50 / p95 / p99 (ms) | queue wait p50 / p95 (ms) | run p50 (ms) "
+    "| not succeeded | commit |\n"
+    "|---|---|---|---|---|---|---|---|---|---|---|---|---|\n"
 )
 
 COUNT_TERMINAL = text(
@@ -52,14 +60,17 @@ SELECT_TIMES = text(
 
 def parse_args():
     p = argparse.ArgumentParser(description="Benchmark DTQ throughput and latency.")
-    p.add_argument("--tasks", type=int, default=10000, help="number of measured tasks (default 10000)")
+    p.add_argument("--tasks", type=int, default=10000, help="burst mode: number of measured tasks (default 10000)")
+    p.add_argument("--rate", type=float, help="open-loop mode: tasks per second to submit")
+    p.add_argument("--duration", type=float, default=60, help="open-loop mode: seconds to submit for (default 60)")
+    p.add_argument("--tick-ms", type=float, default=20, help="open-loop mode: interval between batches (default 20)")
     p.add_argument("--task", choices=["noop", "sleep_ms"], default="noop")
     p.add_argument("--sleep-ms", type=int, default=10, help="duration of each sleep_ms task (default 10)")
-    p.add_argument("--label", help="result name (default: <task>-<workers>w-<timestamp>)")
+    p.add_argument("--label", help="result name (default: <task>-<workers>w[-r<rate>]-<timestamp>)")
     p.add_argument("--workers", type=int, help="worker count to record (default: counted with docker compose ps)")
     p.add_argument("--warmup", type=int, default=200, help="unmeasured tasks run first (default 200)")
-    p.add_argument("--batch-size", type=int, default=500)
-    p.add_argument("--concurrency", type=int, default=8, help="batches in flight at once")
+    p.add_argument("--batch-size", type=int, default=500, help="burst mode: tasks per request")
+    p.add_argument("--concurrency", type=int, default=8, help="requests in flight at once")
     p.add_argument("--timeout", type=float, default=1800, help="seconds to wait for tasks to finish")
     p.add_argument("--api", default="http://localhost:8000")
     p.add_argument("--mysql-url", default="mysql+pymysql://dtq:dtq@localhost:3306/dtq")
@@ -96,16 +107,46 @@ def environment() -> dict:
     }
 
 
-def submit(api: str, spec: dict, n: int, batch_size: int, concurrency: int) -> list[str]:
-    sizes = [min(batch_size, n - i) for i in range(0, n, batch_size)]
-    with httpx.Client(base_url=api, timeout=60) as client:
-        def post(size: int) -> list[str]:
-            resp = client.post("/tasks/batch", json={"tasks": [spec] * size})
-            resp.raise_for_status()
-            return resp.json()["ids"]
+def post_batch(client: httpx.Client, spec: dict, size: int) -> list[str]:
+    resp = client.post("/tasks/batch", json={"tasks": [spec] * size})
+    resp.raise_for_status()
+    return resp.json()["ids"]
 
-        with ThreadPoolExecutor(concurrency) as pool:
-            return [task_id for ids in pool.map(post, sizes) for task_id in ids]
+
+def submit(api: str, spec: dict, n: int, batch_size: int, concurrency: int) -> list[str]:
+    """Burst: submit n tasks as fast as possible."""
+    sizes = [min(batch_size, n - i) for i in range(0, n, batch_size)]
+    with httpx.Client(base_url=api, timeout=60) as client, ThreadPoolExecutor(concurrency) as pool:
+        return [task_id for ids in pool.map(lambda size: post_batch(client, spec, size), sizes) for task_id in ids]
+
+
+def submit_at_rate(api: str, spec: dict, rate: float, duration: float, tick: float,
+                   concurrency: int) -> tuple[list[str], list[float]]:
+    """Open loop: submit rate tasks/s for duration seconds, one batch per tick. Each
+    request is sent at its scheduled time even if earlier ones have not returned.
+    Returns the task ids and how late (seconds) each request was sent."""
+    total = round(rate * duration)
+    start = time.monotonic()
+
+    def send(due: float, size: int) -> tuple[list[str], float]:
+        lag = max(time.monotonic() - due, 0.0)  # includes waiting for a free thread
+        return post_batch(client, spec, size), lag
+
+    futures, sent, i = [], 0, 0
+    with httpx.Client(base_url=api, timeout=60, limits=httpx.Limits(max_connections=concurrency)) as client, \
+            ThreadPoolExecutor(concurrency) as pool:
+        while sent < total:
+            due = start + i * tick
+            delay = due - time.monotonic()
+            if delay > 0:
+                time.sleep(delay)
+            size = min(round(rate * (i + 1) * tick), total) - sent
+            if size:
+                futures.append(pool.submit(send, due, size))
+                sent += size
+            i += 1
+        results = [f.result() for f in futures]
+    return [task_id for ids, _ in results for task_id in ids], [lag for _, lag in results]
 
 
 def chunks(ids: list[str], size: int = 1000):
@@ -163,23 +204,37 @@ def measure(engine, ids: list[str]) -> dict:
 
 def summary_row(result: dict) -> str:
     m, lat, wait = result["metrics"], result["metrics"]["latency_ms"], result["metrics"]["queue_wait_ms"]
+    mode = result.get("mode", "burst")  # results from before rate mode existed are bursts
+    rate = "–"
+    if mode == "rate":
+        rate = f"{result['rate']['target']:.0f} / {result['tasks'] / m['submit_seconds']:.0f}"
     not_succeeded = result["tasks"] - m["statuses"].get("succeeded", 0)
     commit = result["environment"]["commit"] or "?"
     if result["environment"]["uncommitted_changes"]:
         commit += "+changes"
     return (
-        f"| {result['label']} | {result['task']} | {result['workers']} | {result['tasks']} "
+        f"| {result['label']} | {mode} | {result['task']} | {result['workers']} | {result['tasks']} | {rate} "
         f"| {m['wall_seconds']:.1f} | {m['throughput_per_second']:.0f} "
         f"| {lat['p50']:.0f} / {lat['p95']:.0f} / {lat['p99']:.0f} | {wait['p50']:.0f} / {wait['p95']:.0f} "
         f"| {m['run_ms']['p50']:.1f} | {not_succeeded} | {commit} |\n"
     )
 
 
+def write_summary() -> None:
+    """Regenerate summary.md from every benchmark result file, oldest first."""
+    results = [json.loads(p.read_text()) for p in RESULTS.glob("*.json")]
+    results = sorted((r for r in results if "metrics" in r and "latency_ms" in r["metrics"]),
+                     key=lambda r: (r["date"], r["label"]))
+    (RESULTS / "summary.md").write_text(SUMMARY_HEADER + "".join(summary_row(r) for r in results))
+
+
 def main():
     args = parse_args()
     workers = args.workers if args.workers is not None else count_workers()
     started = datetime.now(timezone.utc)
-    label = args.label or f"{args.task}-{workers}w-{started:%Y%m%d-%H%M%S}"
+    mode = "rate" if args.rate else "burst"
+    rate_suffix = f"-r{args.rate:g}" if args.rate else ""
+    label = args.label or f"{args.task}-{workers}w{rate_suffix}-{started:%Y%m%d-%H%M%S}"
     spec = {"name": args.task, "payload": {"ms": args.sleep_ms} if args.task == "sleep_ms" else {}}
     engine = create_engine(args.mysql_url)
 
@@ -188,35 +243,44 @@ def main():
         wait_until_terminal(engine, submit(args.api, spec, args.warmup, args.batch_size, args.concurrency),
                             args.timeout)
 
-    print(f"submitting {args.tasks} {args.task} tasks to {workers} workers")
-    ids = submit(args.api, spec, args.tasks, args.batch_size, args.concurrency)
+    lags = None
+    if mode == "rate":
+        print(f"submitting {args.rate:g} {args.task} tasks/s for {args.duration:g}s to {workers} workers")
+        ids, lags = submit_at_rate(args.api, spec, args.rate, args.duration, args.tick_ms / 1000,
+                                   args.concurrency)
+    else:
+        print(f"submitting {args.tasks} {args.task} tasks to {workers} workers")
+        ids = submit(args.api, spec, args.tasks, args.batch_size, args.concurrency)
     wait_until_terminal(engine, ids, args.timeout)
 
     result = {
         "label": label,
         "date": started.isoformat(timespec="seconds"),
+        "mode": mode,
         "task": args.task,
         "payload": spec["payload"],
-        "tasks": args.tasks,
+        "tasks": len(ids),
         "workers": workers,
         "settings": {k: getattr(args, k) for k in ("warmup", "batch_size", "concurrency")},
         "environment": environment(),
         "metrics": measure(engine, ids),
     }
+    if mode == "rate":
+        result["rate"] = {"target": args.rate, "duration_seconds": args.duration, "tick_ms": args.tick_ms,
+                          "submit_lag_ms": ms_stats(lags)}
 
     RESULTS.mkdir(parents=True, exist_ok=True)
     (RESULTS / f"{label}.json").write_text(json.dumps(result, indent=2) + "\n")
-    summary = RESULTS / "summary.md"
-    if not summary.exists():
-        summary.write_text(SUMMARY_HEADER)
-    with summary.open("a") as f:
-        f.write(summary_row(result))
+    write_summary()
 
     m = result["metrics"]
     print(f"{label}: {m['throughput_per_second']:.0f} tasks/s over {m['wall_seconds']:.1f}s "
           f"(submitting took {m['submit_seconds']:.1f}s), latency p50/p95/p99 "
           f"{m['latency_ms']['p50']:.0f}/{m['latency_ms']['p95']:.0f}/{m['latency_ms']['p99']:.0f} ms, "
           f"statuses {m['statuses']}")
+    if lags:
+        lag = result["rate"]["submit_lag_ms"]
+        print(f"submit lag p50/p99/max {lag['p50']:.1f}/{lag['p99']:.1f}/{lag['max']:.1f} ms")
     print(f"wrote {(RESULTS / f'{label}.json').relative_to(ROOT)}")
 
 
