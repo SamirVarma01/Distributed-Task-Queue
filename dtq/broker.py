@@ -7,6 +7,7 @@ waits in a sorted set scored by run-at time until it is promoted back into its s
 """
 
 import time
+from datetime import datetime, timezone
 
 import redis
 
@@ -54,27 +55,44 @@ class Broker:
     def schedule(self, queue: str, task_id: str, run_at: float) -> None:
         self.r.zadd(DELAYED_KEY, {f"{queue}|{task_id}": run_at})
 
+    def send(self, queue: str, task_id: str, run_at: datetime | None = None) -> None:
+        """Enqueue a new task now, or schedule it if it has a run_at (naive UTC)."""
+        if run_at is None:
+            self.enqueue(queue, task_id)
+        else:
+            self.schedule(queue, task_id, run_at.replace(tzinfo=timezone.utc).timestamp())
+
     def promote_due(self, limit: int = 100) -> int:
         return self._promote(keys=[DELAYED_KEY], args=[time.time(), limit, STREAM_PREFIX])
 
-    def read(self, consumer: str, queues: list[str], block_ms: int):
-        """Return new (stream, message_id, fields) tuples, at most one per queue, in
-        priority order. Every returned message is now owned by this consumer and must
-        be handled, or it sits pending until reclaimed."""
-        resp = self.r.xreadgroup(
-            config.CONSUMER_GROUP, consumer, {stream_key(q): ">" for q in queues},
-            count=1, block=block_ms,
-        )
-        priority = {stream_key(q): i for i, q in enumerate(queues)}
-        messages = [(stream, msg_id, fields) for stream, msgs in resp or [] for msg_id, fields in msgs]
-        return sorted(messages, key=lambda m: priority[m[0]])
+    def read(self, consumer: str, queues: list[str]):
+        """Return the next new (stream, message_id, fields) from the first queue, in
+        priority order, that has one, or None if all are empty.
 
-    def reclaim(self, consumer: str, queue: str, min_idle_ms: int, count: int = 10):
-        """Take over messages another consumer has held unacked for too long."""
-        _, messages, _ = self.r.xautoclaim(
-            stream_key(queue), config.CONSUMER_GROUP, consumer, min_idle_ms, "0-0", count=count,
-        )
-        return [(stream_key(queue), msg_id, fields) for msg_id, fields in messages if fields]
+        Queues are read one at a time, one message at a time: a message this consumer
+        reads but is not yet working on gets no heartbeat, so it would be reclaimed by
+        another worker and run twice. The returned message is now owned by this
+        consumer and must be handled, or it sits pending until reclaimed."""
+        for q in queues:
+            resp = self.r.xreadgroup(config.CONSUMER_GROUP, consumer, {stream_key(q): ">"}, count=1)
+            if resp:
+                stream, [(msg_id, fields)] = resp[0]
+                return stream, msg_id, fields
+        return None
+
+    def reclaim(self, consumer: str, queue: str, min_idle_ms: int):
+        """Take over one message another consumer has held unacked for too long, or
+        return None. One at a time, for the same reason as read()."""
+        start = "0-0"
+        while True:
+            start, messages, *_ = self.r.xautoclaim(
+                stream_key(queue), config.CONSUMER_GROUP, consumer, min_idle_ms, start, count=1,
+            )
+            for msg_id, fields in messages:
+                if fields:
+                    return stream_key(queue), msg_id, fields
+            if start == "0-0":
+                return None
 
     def touch(self, consumer: str, stream: str, msg_id: str) -> None:
         """Reset a pending message's idle time so it is not reclaimed (heartbeat)."""

@@ -11,6 +11,8 @@ CREATE TABLE IF NOT EXISTS tasks (
   error       TEXT         NULL,
   worker_id   VARCHAR(128) NULL,
   created_at  DATETIME(6)  NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  run_at      DATETIME(6)  NULL,
+  enqueued_at DATETIME(6)  NULL,
   started_at  DATETIME(6)  NULL,
   finished_at DATETIME(6)  NULL,
   KEY ix_tasks_status_created (status, created_at),

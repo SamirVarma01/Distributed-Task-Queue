@@ -1,6 +1,5 @@
-import time
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 import redis
@@ -46,32 +45,41 @@ class TaskOut(BaseModel):
     error: str | None = None
     worker_id: str | None = None
     created_at: datetime
+    run_at: datetime | None = None
+    enqueued_at: datetime | None = None
     started_at: datetime | None = None
     finished_at: datetime | None = None
 
 
 @app.post("/tasks", response_model=TaskOut, status_code=202)
 def submit_task(body: SubmitTask):
-    if registry.get(body.name) is None:
+    fn = registry.get(body.name)
+    if fn is None:
         raise HTTPException(400, f"unknown task {body.name!r}; available: {registry.names()}")
     if body.queue not in config.QUEUES:
         raise HTTPException(400, f"unknown queue {body.queue!r}; available: {config.QUEUES}")
+    try:
+        registry.check_payload(fn, body.payload)
+    except TypeError as exc:
+        raise HTTPException(400, f"bad payload for {body.name!r}: {exc}")
 
-    # MySQL first: a worker can only pick up a task whose row already exists.
+    # MySQL first: a worker can only pick up a task whose row already exists. If we
+    # crash before enqueued_at is set, the reconciler re-sends the task.
     with SessionLocal() as s:
-        task = Task(name=body.name, queue=body.queue, payload=body.payload, max_retries=body.max_retries)
+        run_at = utcnow() + timedelta(seconds=body.delay_seconds) if body.delay_seconds else None
+        task = Task(name=body.name, queue=body.queue, payload=body.payload,
+                    max_retries=body.max_retries, run_at=run_at)
         s.add(task)
         s.commit()
 
         try:
-            if body.delay_seconds:
-                broker.schedule(task.queue, task.id, time.time() + body.delay_seconds)
-            else:
-                broker.enqueue(task.queue, task.id)
+            broker.send(task.queue, task.id, task.run_at)
         except redis.RedisError as exc:
             task.status, task.error, task.finished_at = TaskStatus.DEAD, f"enqueue failed: {exc}", utcnow()
             s.commit()
             raise HTTPException(503, "broker unavailable")
+        task.enqueued_at = utcnow()
+        s.commit()
     return task
 
 

@@ -7,12 +7,13 @@ import socket
 import threading
 import time
 import traceback
+from datetime import timedelta
 
-from sqlalchemy import update
+from sqlalchemy import select, update
 
 from . import config, registry, tasks  # noqa: F401  (tasks import registers them)
 from .broker import Broker
-from .db import TERMINAL_STATUSES, SessionLocal, Task, TaskStatus, utcnow, wait_for_db
+from .db import SessionLocal, Task, TaskStatus, utcnow, wait_for_db
 
 log = logging.getLogger("dtq.worker")
 
@@ -44,6 +45,7 @@ class Worker:
         self.queues = config.QUEUES
         self.stopping = False
         self._last_reclaim = 0.0
+        self._last_reconcile = 0.0
 
     def run(self):
         signal.signal(signal.SIGTERM, self._request_stop)
@@ -54,12 +56,29 @@ class Worker:
         log.info("worker %s consuming %s", self.id, self.queues)
 
         while not self.stopping:
-            self.broker.promote_due()
-            if time.monotonic() - self._last_reclaim > config.RECLAIM_INTERVAL_SECONDS:
-                self._reclaim_stale()
-            for msg in self.broker.read(self.id, self.queues, block_ms=1000):
-                self.handle(*msg)
+            try:
+                if not self.step():
+                    time.sleep(config.POLL_INTERVAL_SECONDS)
+            except Exception:
+                # MySQL or Redis is unavailable. Any message we held stays unacked and
+                # is reclaimed once the outage is over, so back off and keep going.
+                log.exception("worker loop failed; retrying in %.0fs", config.ERROR_BACKOFF_SECONDS)
+                time.sleep(config.ERROR_BACKOFF_SECONDS)
         log.info("worker %s stopped", self.id)
+
+    def step(self) -> bool:
+        """One loop iteration: promote due retries, re-send lost tasks, reclaim stale
+        messages, and run the next task. Returns False if there was no new task to run."""
+        self.broker.promote_due()
+        if time.monotonic() - self._last_reconcile > config.RECONCILE_INTERVAL_SECONDS:
+            self._reconcile()
+        if time.monotonic() - self._last_reclaim > config.RECLAIM_INTERVAL_SECONDS:
+            self._reclaim_stale()
+        msg = self.broker.read(self.id, self.queues)
+        if msg is None:
+            return False
+        self.handle(*msg)
+        return True
 
     def _request_stop(self, *_):
         log.info("shutdown requested; finishing current task")
@@ -68,15 +87,35 @@ class Worker:
     def _reclaim_stale(self):
         self._last_reclaim = time.monotonic()
         for q in self.queues:
-            for stream, msg_id, fields in self.broker.reclaim(self.id, q, config.VISIBILITY_TIMEOUT_MS):
-                log.warning("reclaimed %s from a dead worker", fields.get("task_id"))
-                self.handle(stream, msg_id, fields)
-                if self.stopping:
-                    return
+            while not self.stopping:
+                msg = self.broker.reclaim(self.id, q, config.VISIBILITY_TIMEOUT_MS)
+                if msg is None:
+                    break
+                log.warning("reclaimed %s from a dead worker", msg[2].get("task_id"))
+                self.handle(*msg, reclaimed=True)
 
-    def handle(self, stream: str, msg_id: str, fields: dict):
-        task = self._claim(fields.get("task_id"))
-        if task is None:  # already finished, cancelled, or unknown: drop the message
+    def _reconcile(self):
+        """Re-send queued tasks whose message never reached Redis (the API crashed
+        between the INSERT and the XADD). If the message did get there after all, the
+        duplicate is harmless: a fresh message cannot claim a task that is already
+        running or finished."""
+        self._last_reconcile = time.monotonic()
+        cutoff = utcnow() - timedelta(seconds=config.RECONCILE_AFTER_SECONDS)
+        with SessionLocal() as s:
+            lost = s.scalars(
+                select(Task)
+                .where(Task.status == TaskStatus.QUEUED, Task.enqueued_at.is_(None), Task.created_at < cutoff)
+                .limit(100)
+            ).all()
+            for task in lost:
+                log.warning("re-sending task %s, which never reached the broker", task.id)
+                self.broker.send(task.queue, task.id, task.run_at)
+                task.enqueued_at = utcnow()
+                s.commit()
+
+    def handle(self, stream: str, msg_id: str, fields: dict, reclaimed: bool = False):
+        task = self._claim(fields.get("task_id"), reclaimed)
+        if task is None:  # already running, finished, cancelled, or unknown: drop the message
             self.broker.ack(stream, msg_id)
             return
 
@@ -86,16 +125,23 @@ class Worker:
             self._execute(task)
         finally:
             heartbeat.stop()
-            self.broker.ack(stream, msg_id)
+        # Ack only once the outcome is recorded. If recording it raised (MySQL or Redis
+        # down), the message stays pending and is reclaimed after the visibility timeout.
+        self.broker.ack(stream, msg_id)
 
-    def _claim(self, task_id: str | None) -> Task | None:
-        """Mark the task running. The conditional update makes duplicate deliveries harmless."""
+    def _claim(self, task_id: str | None, reclaimed: bool) -> Task | None:
+        """Mark the task running. The conditional update makes duplicate deliveries
+        harmless: a fresh message only claims a task that is waiting to run. A reclaimed
+        message may also take over a 'running' task, whose worker died mid-run."""
         if not task_id:
             return None
+        claimable = [TaskStatus.QUEUED, TaskStatus.RETRYING]
+        if reclaimed:
+            claimable.append(TaskStatus.RUNNING)
         with SessionLocal() as s:
             res = s.execute(
                 update(Task)
-                .where(Task.id == task_id, Task.status.not_in(TERMINAL_STATUSES))
+                .where(Task.id == task_id, Task.status.in_(claimable))
                 .values(status=TaskStatus.RUNNING, attempts=Task.attempts + 1,
                         worker_id=self.id, started_at=utcnow())
             )
@@ -106,6 +152,10 @@ class Worker:
         fn = registry.get(task.name)
         if fn is None:
             return self._finish(task, TaskStatus.DEAD, error=f"no task registered as {task.name!r}")
+        try:
+            registry.check_payload(fn, task.payload)
+        except TypeError as exc:  # can never succeed, so don't retry
+            return self._finish(task, TaskStatus.DEAD, error=f"bad payload: {exc}")
         # Attempts also count runs lost to worker crashes, so a task that keeps killing
         # its worker eventually goes dead instead of looping forever.
         if task.attempts > task.max_retries + 1:

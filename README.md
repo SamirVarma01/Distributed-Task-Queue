@@ -21,7 +21,9 @@ docker compose up --scale worker=10    # change the worker count
 python scripts/demo.py 100             # submit 100 random tasks and watch them finish
 ```
 
-API docs: http://localhost:8000/docs
+API docs: http://localhost:8000/docs. The `api` container's healthcheck calls `/health`, which checks MySQL and Redis, so `docker compose ps` shows whether it is healthy.
+
+`sql/schema.sql` is built into the MySQL image and runs only when the MySQL volume is first created. After changing it, reset the data with `docker compose down -v` and start again with `--build`.
 
 ```sh
 curl -X POST localhost:8000/tasks -H 'Content-Type: application/json' \
@@ -56,16 +58,28 @@ The payload's fields are passed to it as keyword arguments. The return value mus
 - **Crash recovery.** A message stays in the group's pending list until the worker acks it. While a task runs, its worker sends a heartbeat (`XCLAIM ... JUSTID`) every 10s. A message that sits idle longer than `VISIBILITY_TIMEOUT_MS` means its worker died, and another worker takes it over with `XAUTOCLAIM`.
 - **Retries.** A failed task waits in the `dtq:delayed` sorted set, using exponential backoff with jitter. A Lua script moves due tasks back into their stream in one atomic step, so every worker can run it without enqueueing a task twice. After `max_retries` the task is marked `dead`, and its traceback is saved in `error`.
 - **Poison tasks.** Attempts lost to worker crashes count toward the limit too, so a task that keeps killing its worker ends up `dead` instead of looping forever.
-- **Idempotent claims.** A worker starts a task with a conditional `UPDATE ... WHERE status NOT IN (terminal)`. If the same message arrives twice, or the task was cancelled, the worker just acks the message and skips it.
-- **Priority.** `QUEUES=high,default,low` sets the order in which workers drain the queues.
+- **Idempotent claims.** A worker starts a task with a conditional `UPDATE ... WHERE status IN ('queued', 'retrying')`, and also allows `'running'` when it reclaimed the message from a dead worker. If a duplicate message arrives, or the task was cancelled, the worker just acks the message and skips it.
+- **Lost submissions.** The API writes the MySQL row first and sets `enqueued_at` once the message is in Redis. If the API crashes in between, a worker's reconciler finds `queued` rows with no `enqueued_at` that are older than `RECONCILE_AFTER_SECONDS` (60s) and re-sends them, keeping any delay (`run_at`).
+- **Bad payloads.** The API rejects a payload that doesn't fit the task's signature (missing or unexpected arguments) with a 400. If one reaches a worker anyway, the task goes `dead` at once instead of being retried.
+- **One message at a time.** A worker reads (and reclaims) a single message and finishes it before taking another. A message it held but wasn't working on would get no heartbeat, so another worker could reclaim it and run it a second time.
+- **Ack after the result is saved.** If MySQL or Redis fails while a worker is recording a task's outcome, the message stays pending and is reclaimed once the outage is over. The worker logs the error, backs off (`ERROR_BACKOFF_SECONDS`) and keeps running.
+- **Priority.** `QUEUES=high,default,low` sets the order in which workers check the queues: a task in `low` runs only when `high` and `default` are empty. An idle worker polls every `POLL_INTERVAL_SECONDS` (0.5s).
 - **Graceful shutdown.** On SIGTERM a worker finishes its current task before it exits (`stop_grace_period: 30s`).
 
 **Delivery is at-least-once.** A worker can crash after a task's side effects happen but before it records the result. When that happens the task runs again, so tasks should be idempotent.
 
+## Tests
+
+The tests run without Docker: fakeredis stands in for Redis and SQLite for MySQL.
+
+```sh
+python -m venv .venv && .venv/bin/pip install -r requirements.txt -r requirements-dev.txt
+.venv/bin/pytest
+```
+
 ## Possible next steps
 
-- A reconciler that re-enqueues `queued` rows that never reached Redis (for example, if the API crashed between the MySQL insert and the `XADD`).
 - Per-task timeouts (run tasks in a subprocess and kill it when time runs out).
 - Several tasks running at once in each worker process (a thread or process pool).
 - Prometheus metrics and a dashboard.
-- Tests, using testcontainers for MySQL and Redis.
+- Integration tests against real MySQL and Redis (testcontainers), which would also cover `sql/schema.sql`.

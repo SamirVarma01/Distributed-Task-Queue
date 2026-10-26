@@ -1,3 +1,4 @@
+import inspect
 from typing import Any, Callable
 
 _TASKS: dict[str, Callable[..., Any]] = {}
@@ -19,3 +20,9 @@ def get(name: str) -> Callable[..., Any] | None:
 
 def names() -> list[str]:
     return sorted(_TASKS)
+
+
+def check_payload(fn: Callable[..., Any], payload: dict[str, Any]) -> None:
+    """Raise TypeError if the payload's fields don't fit fn's parameters (missing or
+    unexpected arguments). Such a task can never succeed, so it is not worth retrying."""
+    inspect.signature(fn).bind(**payload)

@@ -23,9 +23,6 @@ class TaskStatus(str, enum.Enum):
     CANCELLED = "cancelled"
 
 
-TERMINAL_STATUSES = (TaskStatus.SUCCEEDED, TaskStatus.DEAD, TaskStatus.CANCELLED)
-
-
 def utcnow() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
@@ -53,6 +50,11 @@ class Task(Base):
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     worker_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    # When a delayed task should first run; NULL means as soon as possible.
+    run_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # Set once the task's message is in Redis. Queued rows left NULL are re-sent by the
+    # reconciler (the API crashed between the INSERT and the XADD).
+    enqueued_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
