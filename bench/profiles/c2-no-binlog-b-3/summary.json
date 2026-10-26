@@ -1,0 +1,106 @@
+{
+  "label": "c2-no-binlog-b-3",
+  "workers": 10,
+  "tasks": 30000,
+  "environment": {
+    "commit": "eb6196d",
+    "uncommitted_changes": false,
+    "host": "macOS-26.2-arm64-arm-64bit-Mach-O",
+    "cpu": "Apple M2",
+    "docker_cpus": 8,
+    "docker_mem_gib": 3.8,
+    "docker_version": "29.1.3"
+  },
+  "throughput_per_second": 920.5,
+  "run_ms": {
+    "p50": 4.4,
+    "p95": 10.4,
+    "p99": 17.3,
+    "max": 77.2
+  },
+  "measured_window_seconds": 33.6,
+  "docker_stats_samples": 15,
+  "cpu_percent_mean_by_container": {
+    "distributed-task-queue-api-1": 19.1,
+    "distributed-task-queue-mysql-1": 90.9,
+    "distributed-task-queue-redis-1": 13.5,
+    "distributed-task-queue-worker-1": 37.7,
+    "distributed-task-queue-worker-10": 34.7,
+    "distributed-task-queue-worker-2": 36.1,
+    "distributed-task-queue-worker-3": 36.2,
+    "distributed-task-queue-worker-4": 37.2,
+    "distributed-task-queue-worker-5": 37.2,
+    "distributed-task-queue-worker-6": 36.8,
+    "distributed-task-queue-worker-7": 36.8,
+    "distributed-task-queue-worker-8": 37.1,
+    "distributed-task-queue-worker-9": 37.3
+  },
+  "cpu_percent_total": {
+    "mean": 490.6,
+    "max": 524.7,
+    "capacity": 800
+  },
+  "mysql_variables": {
+    "innodb_buffer_pool_size": "134217728",
+    "innodb_flush_log_at_trx_commit": "1",
+    "innodb_io_capacity": "10000",
+    "innodb_redo_log_capacity": "104857600",
+    "log_bin": "OFF",
+    "max_connections": "151",
+    "sync_binlog": "1"
+  },
+  "mysql_status_delta": {
+    "Questions": 181168,
+    "Com_admin_commands": 60121,
+    "Com_select": 30903,
+    "Com_insert": 30000,
+    "Com_update": 60060,
+    "Com_commit": 60120,
+    "Com_rollback": 38,
+    "Innodb_os_log_fsyncs": 29911,
+    "Innodb_data_fsyncs": 30405,
+    "Innodb_log_waits": 0,
+    "Innodb_row_lock_waits": 0,
+    "Innodb_row_lock_time": 0,
+    "Innodb_buffer_pool_wait_free": 0,
+    "Innodb_rows_updated": 90000,
+    "Innodb_rows_inserted": 30000,
+    "Bytes_received": 76775062,
+    "Bytes_sent": 37546775,
+    "Connections": 17
+  },
+  "mysql_round_trips_per_task": 8.04,
+  "mysql_per_task": {
+    "Questions": 6.04,
+    "Com_admin_commands": 2.0,
+    "Com_select": 1.03,
+    "Com_insert": 1.0,
+    "Com_update": 2.0,
+    "Com_commit": 2.0,
+    "Com_rollback": 0.0,
+    "Innodb_os_log_fsyncs": 1.0,
+    "Innodb_data_fsyncs": 1.01
+  },
+  "mysql_per_second": {
+    "Questions": 5390.3,
+    "Com_commit": 1788.7,
+    "Innodb_os_log_fsyncs": 889.9
+  },
+  "mysql_statements_over_100ms": 0,
+  "redis_cpu_seconds": 4.02,
+  "redis_calls_per_task": {
+    "xreadgroup": 2.0,
+    "evalsha": 1.0,
+    "zrangebyscore": 1.0,
+    "multi": 1.0,
+    "xdel": 1.0,
+    "exec": 1.0,
+    "xack": 1.0,
+    "xadd": 1.0,
+    "xautoclaim": 0.0,
+    "ping": 0.0,
+    "client|setinfo": 0.0,
+    "info": 0.0,
+    "config|resetstat": 0.0
+  }
+}

@@ -1,0 +1,3 @@
+start_time,query_time,lock_time,rows_examined,sql_text
+2026-10-26 16:46:34.415667,0:00:00.160198,0:00:00.000002,1000,"SELECT COUNT(*) FROM tasks WHERE status IN ('succeeded', 'dead', 'cancelled') AND id IN ('f6d48e74-adec-44ec-a764-cbdeb76051fd', '0046f80c-09c6-401f-ad11-936110973266', '39fc665b-db0b-446c-b115-6d2bca"
+2026-10-26 16:47:01.381631,0:00:00.475688,0:00:00.000032,28,"SELECT DIGEST_TEXT, COUNT_STAR, SUM_TIMER_WAIT / 1e9 AS total_ms, AVG_TIMER_WAIT / 1e9 AS avg_ms, MAX_TIMER_WAIT / 1e9 AS max_ms, SUM_LOCK_TIME / 1e9 AS lock_ms, SUM_ROWS_AFFECTED FROM performance_sch"
