@@ -29,7 +29,9 @@ import bench
 
 PROFILES = bench.ROOT / "bench" / "profiles"
 STATUS_COUNTERS = [
-    "Questions", "Com_select", "Com_insert", "Com_update", "Com_commit", "Com_rollback",
+    # Questions counts statements; pings (sent by pool_pre_ping on every checkout) are
+    # counted separately in Com_admin_commands. Together they are the round trips.
+    "Questions", "Com_admin_commands", "Com_select", "Com_insert", "Com_update", "Com_commit", "Com_rollback",
     "Innodb_os_log_fsyncs", "Innodb_data_fsyncs", "Innodb_log_waits", "Innodb_row_lock_waits",
     "Innodb_row_lock_time", "Innodb_buffer_pool_wait_free", "Innodb_rows_updated", "Innodb_rows_inserted",
     "Bytes_received", "Bytes_sent", "Connections",
@@ -173,6 +175,7 @@ def main():
         },
         "mysql_variables": variables,
         "mysql_status_delta": delta,
+        "mysql_round_trips_per_task": round((delta["Questions"] + delta["Com_admin_commands"]) / n, 2),
         "mysql_per_task": {k: round(v / n, 2) for k, v in delta.items() if k.startswith(("Com_", "Questions", "Innodb_os_log_fsyncs", "Innodb_data_fsyncs"))},
         "mysql_per_second": {k: round(v / elapsed, 1) for k, v in delta.items() if k.startswith(("Com_commit", "Innodb_os_log_fsyncs", "Questions"))},
         "mysql_statements_over_100ms": len(slow),
@@ -206,7 +209,7 @@ def main():
 
     print(json.dumps({k: summary[k] for k in (
         "throughput_per_second", "run_ms", "cpu_percent_mean_by_container", "cpu_percent_total",
-        "mysql_per_task", "mysql_per_second", "mysql_statements_over_100ms", "redis_cpu_seconds",
+        "mysql_round_trips_per_task", "mysql_per_task", "mysql_per_second", "mysql_statements_over_100ms", "redis_cpu_seconds",
         "redis_calls_per_task")}, indent=2))
     print(f"wrote {out_dir.relative_to(bench.ROOT)}")
 
