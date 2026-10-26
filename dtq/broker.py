@@ -75,9 +75,10 @@ class Broker:
     def promote_due(self, limit: int = 100) -> int:
         return self._promote(keys=[DELAYED_KEY], args=[time.time(), limit, STREAM_PREFIX])
 
-    def read(self, consumer: str, queues: list[str]):
+    def read(self, consumer: str, queues: list[str], block_ms: int = 0):
         """Return the next new (stream, message_id, fields) from the first queue, in
-        priority order, that has one, or None if all are empty.
+        priority order, that has one. If all are empty, wait up to block_ms for a
+        message to arrive, then return None.
 
         Queues are read one at a time, one message at a time: a message this consumer
         reads but is not yet working on gets no heartbeat, so it would be reclaimed by
@@ -88,7 +89,29 @@ class Broker:
             if resp:
                 stream, [(msg_id, fields)] = resp[0]
                 return stream, msg_id, fields
-        return None
+        return self._read_blocking(consumer, queues, block_ms) if block_ms else None
+
+    def _read_blocking(self, consumer: str, queues: list[str], block_ms: int):
+        """Wait for a message on any queue. COUNT applies per stream, so if several
+        queues receive messages at once this returns one from each. Keep the
+        highest-priority one and hand the rest straight back, so this consumer never
+        holds a message it is not working on: ack, delete and re-add each at the tail
+        of its stream, atomically. The cost is that a handed-back message moves behind
+        any that arrived after it."""
+        resp = self.r.xreadgroup(
+            config.CONSUMER_GROUP, consumer, {stream_key(q): ">" for q in queues}, count=1, block=block_ms,
+        )
+        priority = {stream_key(q): i for i, q in enumerate(queues)}
+        messages = sorted(((stream, msg_id, fields) for stream, entries in resp or [] for msg_id, fields in entries),
+                          key=lambda m: priority[m[0]])
+        if len(messages) > 1:
+            pipe = self.r.pipeline()  # MULTI/EXEC: a crash can't drop or duplicate them
+            for stream, msg_id, fields in messages[1:]:
+                pipe.xack(stream, config.CONSUMER_GROUP, msg_id)
+                pipe.xdel(stream, msg_id)
+                pipe.xadd(stream, fields)
+            pipe.execute()
+        return messages[0] if messages else None
 
     def reclaim(self, consumer: str, queue: str, min_idle_ms: int):
         """Take over one message another consumer has held unacked for too long, or

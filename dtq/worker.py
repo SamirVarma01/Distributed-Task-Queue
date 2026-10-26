@@ -57,8 +57,7 @@ class Worker:
 
         while not self.stopping:
             try:
-                if not self.step():
-                    time.sleep(config.POLL_INTERVAL_SECONDS)
+                self.step(block_ms=config.READ_BLOCK_MS)
             except Exception:
                 # MySQL or Redis is unavailable. Any message we held stays unacked and
                 # is reclaimed once the outage is over, so back off and keep going.
@@ -66,15 +65,16 @@ class Worker:
                 time.sleep(config.ERROR_BACKOFF_SECONDS)
         log.info("worker %s stopped", self.id)
 
-    def step(self) -> bool:
+    def step(self, block_ms: int = 0) -> bool:
         """One loop iteration: promote due retries, re-send lost tasks, reclaim stale
-        messages, and run the next task. Returns False if there was no new task to run."""
+        messages, and run the next task, waiting up to block_ms for one if the queues
+        are empty. Returns False if there was no new task to run."""
         self.broker.promote_due()
         if time.monotonic() - self._last_reconcile > config.RECONCILE_INTERVAL_SECONDS:
             self._reconcile()
         if time.monotonic() - self._last_reclaim > config.RECLAIM_INTERVAL_SECONDS:
             self._reclaim_stale()
-        msg = self.broker.read(self.id, self.queues)
+        msg = self.broker.read(self.id, self.queues, block_ms)
         if msg is None:
             return False
         self.handle(*msg)

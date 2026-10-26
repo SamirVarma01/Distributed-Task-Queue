@@ -233,3 +233,39 @@ def test_task_costs_three_statements_two_commits_and_no_rollbacks(submit, make_w
         event.remove(engine, "before_cursor_execute", record)
 
     assert calls == {"statements": ["UPDATE", "SELECT", "UPDATE"], "commit": 2, "rollback": 0}
+
+
+def test_blocking_read_keeps_highest_priority_and_hands_back_the_rest(submit, make_worker):
+    """A blocking XREADGROUP over several streams returns one message from each stream
+    that has one. The worker must keep only the highest-priority message and hand the
+    others back, so it never holds a message it isn't working on."""
+    low = submit("noop", queue="low")
+    default = submit("noop", queue="default")
+    high = submit("noop", queue="high")
+    w = make_worker()
+
+    stream, msg_id, fields = w.broker._read_blocking(w.id, config.QUEUES, block_ms=100)
+    assert fields["task_id"] == high
+    assert sum(pending_count(w.broker, q) for q in config.QUEUES) == 1
+    assert w.broker.r.xlen("dtq:stream:low") == 1
+    assert w.broker.r.xlen("dtq:stream:default") == 1
+
+    w.handle(stream, msg_id, fields)
+    assert w.step(block_ms=100) is True
+    assert get_task(default).status == TaskStatus.SUCCEEDED
+    assert get_task(low).status == TaskStatus.QUEUED
+    assert w.step(block_ms=100) is True
+    assert get_task(low).status == TaskStatus.SUCCEEDED
+    assert sum(pending_count(w.broker, q) for q in config.QUEUES) == 0
+
+
+def test_step_with_blocking_read_still_takes_priority_order(submit, make_worker):
+    low = submit("noop", queue="low")
+    high = submit("noop", queue="high")
+    w = make_worker()
+
+    assert w.step(block_ms=100) is True
+    assert get_task(high).status == TaskStatus.SUCCEEDED
+    assert get_task(low).status == TaskStatus.QUEUED
+    assert w.step(block_ms=100) is True
+    assert w.step(block_ms=100) is False
