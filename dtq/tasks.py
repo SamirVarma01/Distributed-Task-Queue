@@ -23,3 +23,14 @@ def flaky(fail_rate: float = 0.5) -> str:
     if random.random() < fail_rate:
         raise RuntimeError("random failure")
     return "ok"
+
+
+@task()
+def noop() -> None:
+    """Does nothing; benchmarks measure the queue's own overhead with it."""
+
+
+@task()
+def sleep_ms(ms: int = 10) -> None:
+    """Simulates a short I/O-bound task for benchmarks."""
+    time.sleep(ms / 1000)

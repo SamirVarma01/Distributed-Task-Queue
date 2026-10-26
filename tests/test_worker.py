@@ -190,3 +190,12 @@ def test_reconciler_resends_tasks_that_never_reached_redis(make_worker, monkeypa
     assert w.broker.r.zscore("dtq:delayed", f"default|{lost_delayed}") is not None
     assert get_task(being_submitted).enqueued_at is None
     assert w.broker.r.xlen("dtq:stream:default") == 0
+
+
+def test_benchmark_tasks(submit, make_worker):
+    noop = submit("noop")
+    sleep = submit("sleep_ms", {"ms": 1})
+    drain(make_worker())
+
+    assert get_task(noop).status == TaskStatus.SUCCEEDED
+    assert get_task(sleep).status == TaskStatus.SUCCEEDED
