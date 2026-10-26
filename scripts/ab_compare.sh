@@ -13,6 +13,7 @@
 #
 # WARNING: deletes the Compose stack's data (docker compose down -v) before every run.
 set -euo pipefail
+source "$(dirname "$0")/bench_guard.sh"
 cd "$(dirname "$0")/.."
 root=$PWD
 

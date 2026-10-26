@@ -89,6 +89,17 @@ def count_workers() -> int | None:
     return None if out is None else out.split().count("worker")
 
 
+def power_source() -> str | None:
+    """'AC Power' or 'Battery Power (<charge>)' on macOS laptops, else None."""
+    out = run(["pmset", "-g", "batt"])
+    if not out or "drawing from '" not in out:
+        return None
+    source = out.split("drawing from '", 1)[1].split("'", 1)[0]
+    if source == "Battery Power" and "%" in out:
+        source += f" ({out.split('%', 1)[0].split()[-1]}%)"
+    return source
+
+
 def environment() -> dict:
     cpu = run(["sysctl", "-n", "machdep.cpu.brand_string"])
     if cpu is None and Path("/proc/cpuinfo").exists():
@@ -106,6 +117,7 @@ def environment() -> dict:
         "docker_cpus": int(ncpu) if ncpu else None,
         "docker_mem_gib": round(int(mem) / 2**30, 1) if mem else None,
         "docker_version": version,
+        "power": power_source(),
     }
 
 

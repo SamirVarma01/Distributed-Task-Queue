@@ -10,6 +10,7 @@
 # WARNING: wipes the Compose stack's MySQL and Redis data (docker compose down -v)
 # before each run. The stack is left running at the last worker count.
 set -euo pipefail
+source "$(dirname "$0")/bench_guard.sh"
 cd "$(dirname "$0")/.."
 
 PYTHON=${PYTHON:-$([ -x .venv/bin/python ] && echo .venv/bin/python || echo python3)}

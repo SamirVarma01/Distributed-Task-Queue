@@ -98,6 +98,8 @@ There are two modes. A **burst** run (the default) submits every task at once to
 
 To judge a change, compare commits with `scripts/ab_compare.sh NAME BEFORE AFTER PAIRS profile|bench ...`, which alternates runs of the two commits so that the machine's speed drifting between runs affects both equally. `scripts/bench_report.py` prints medians over repeated runs.
 
+On a laptop, benchmark on mains power with the lid open. Both scripts refuse to start on battery (set `ALLOW_BATTERY=1` to override) and run under `caffeinate` so the machine doesn't idle-sleep, and every result records its power source.
+
 The matrix and A/B scripts run `docker compose down -v` before each run, which **deletes the stack's data**. Both scripts need the dev requirements (`pip install -r requirements-dev.txt`).
 
 ## Possible next steps
