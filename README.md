@@ -69,6 +69,10 @@ The payload's fields are passed to it as keyword arguments. The return value mus
 
 **Delivery is at-least-once.** A worker can crash after a task's side effects happen but before it records the result. When that happens the task runs again, so tasks should be idempotent.
 
+## MySQL settings
+
+MySQL runs with `--disable-log-bin`. The binary log is used for replication and point-in-time recovery. This stack does neither: there is one MySQL server, and the data is reset freely. Waiting for disk flushes on commit was the main limit on worker throughput (see `bench/profiles/FINDINGS.md`), and keeping the binary log consistent with InnoDB adds a second flush, of the binary log, to each commit. Turning it off doesn't weaken durability: with `innodb_flush_log_at_trx_commit=1` (the default, unchanged), InnoDB's redo log is flushed to disk before each commit returns, so a committed claim or result survives a crash. If you add a replica or need point-in-time recovery, remove the flag.
+
 ## Tests
 
 The tests run without Docker: fakeredis stands in for Redis and SQLite for MySQL.

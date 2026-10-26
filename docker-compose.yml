@@ -14,6 +14,10 @@ x-app: &app
 services:
   mysql:
     build: ./sql
+    # No binary log: it exists for replication and point-in-time recovery, which this
+    # stack doesn't use, and keeping it in step with InnoDB costs every commit a second
+    # fsync. Commits stay durable through InnoDB's redo log. See "MySQL settings" in the README.
+    command: ["mysqld", "--disable-log-bin"]
     environment:
       MYSQL_DATABASE: dtq
       MYSQL_USER: dtq
