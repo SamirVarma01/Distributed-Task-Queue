@@ -59,7 +59,11 @@ class Task(Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
-engine = create_engine(config.MYSQL_URL, pool_pre_ping=True, pool_recycle=1800)
+# pool_reset_on_return=None: by default the pool sends a ROLLBACK every time a connection
+# is returned, even right after a COMMIT. Every connection here is used through a
+# Session or Connection, which already ends its transaction (commit, or rollback on
+# close or error) before returning it, so that ROLLBACK is a wasted round trip.
+engine = create_engine(config.MYSQL_URL, pool_pre_ping=True, pool_recycle=1800, pool_reset_on_return=None)
 SessionLocal = sessionmaker(engine, expire_on_commit=False)
 
 

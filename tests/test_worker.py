@@ -199,3 +199,37 @@ def test_benchmark_tasks(submit, make_worker):
 
     assert get_task(noop).status == TaskStatus.SUCCEEDED
     assert get_task(sleep).status == TaskStatus.SUCCEEDED
+
+
+def test_task_costs_three_statements_two_commits_and_no_rollbacks(submit, make_worker, monkeypatch):
+    """Claim = UPDATE + SELECT + COMMIT, result = UPDATE + COMMIT. Guards against the
+    extra transaction and pool-reset ROLLBACKs that used to cost 4 round trips a task."""
+    from sqlalchemy import event
+
+    from dtq.db import engine
+
+    submit("noop")
+    w = make_worker()
+    calls = {"statements": [], "commit": 0, "rollback": 0}
+    real_commit, real_rollback = engine.dialect.do_commit, engine.dialect.do_rollback
+
+    def commit(conn):
+        calls["commit"] += 1
+        real_commit(conn)
+
+    def rollback(conn):
+        calls["rollback"] += 1
+        real_rollback(conn)
+
+    def record(conn, cursor, statement, *_):
+        calls["statements"].append(statement.split()[0])
+
+    monkeypatch.setattr(engine.dialect, "do_commit", commit)
+    monkeypatch.setattr(engine.dialect, "do_rollback", rollback)
+    event.listen(engine, "before_cursor_execute", record)
+    try:
+        assert w.step() is True
+    finally:
+        event.remove(engine, "before_cursor_execute", record)
+
+    assert calls == {"statements": ["UPDATE", "SELECT", "UPDATE"], "commit": 2, "rollback": 0}

@@ -138,14 +138,15 @@ class Worker:
         claimable = [TaskStatus.QUEUED, TaskStatus.RETRYING]
         if reclaimed:
             claimable.append(TaskStatus.RUNNING)
-        with SessionLocal() as s:
+        # Read the claimed row in the claim's own transaction: reading it after the
+        # commit would open a second transaction that then has to be rolled back.
+        with SessionLocal() as s, s.begin():
             res = s.execute(
                 update(Task)
                 .where(Task.id == task_id, Task.status.in_(claimable))
                 .values(status=TaskStatus.RUNNING, attempts=Task.attempts + 1,
                         worker_id=self.id, started_at=utcnow())
             )
-            s.commit()
             return s.get(Task, task_id) if res.rowcount else None
 
     def _execute(self, task: Task):
