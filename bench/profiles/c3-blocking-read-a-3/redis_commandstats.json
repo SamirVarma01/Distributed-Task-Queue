@@ -1,0 +1,93 @@
+{
+  "cmdstat_xautoclaim": {
+    "calls": 90,
+    "usec": 1047,
+    "usec_per_call": 11.63,
+    "rejected_calls": 0,
+    "failed_calls": 0
+  },
+  "cmdstat_client|setinfo": {
+    "calls": 4,
+    "usec": 9,
+    "usec_per_call": 2.25,
+    "rejected_calls": 0,
+    "failed_calls": 0
+  },
+  "cmdstat_evalsha": {
+    "calls": 30066,
+    "usec": 515853,
+    "usec_per_call": 17.16,
+    "rejected_calls": 0,
+    "failed_calls": 0
+  },
+  "cmdstat_xreadgroup": {
+    "calls": 60198,
+    "usec": 450890,
+    "usec_per_call": 7.49,
+    "rejected_calls": 0,
+    "failed_calls": 0
+  },
+  "cmdstat_xadd": {
+    "calls": 30000,
+    "usec": 21199,
+    "usec_per_call": 0.71,
+    "rejected_calls": 0,
+    "failed_calls": 0
+  },
+  "cmdstat_xack": {
+    "calls": 30000,
+    "usec": 92187,
+    "usec_per_call": 3.07,
+    "rejected_calls": 0,
+    "failed_calls": 0
+  },
+  "cmdstat_info": {
+    "calls": 2,
+    "usec": 72,
+    "usec_per_call": 36.0,
+    "rejected_calls": 0,
+    "failed_calls": 0
+  },
+  "cmdstat_exec": {
+    "calls": 30000,
+    "usec": 324848,
+    "usec_per_call": 10.83,
+    "rejected_calls": 0,
+    "failed_calls": 0
+  },
+  "cmdstat_zrangebyscore": {
+    "calls": 30066,
+    "usec": 139614,
+    "usec_per_call": 4.64,
+    "rejected_calls": 0,
+    "failed_calls": 0
+  },
+  "cmdstat_xdel": {
+    "calls": 30000,
+    "usec": 188391,
+    "usec_per_call": 6.28,
+    "rejected_calls": 0,
+    "failed_calls": 0
+  },
+  "cmdstat_multi": {
+    "calls": 30000,
+    "usec": 20453,
+    "usec_per_call": 0.68,
+    "rejected_calls": 0,
+    "failed_calls": 0
+  },
+  "cmdstat_config|resetstat": {
+    "calls": 1,
+    "usec": 266,
+    "usec_per_call": 266.0,
+    "rejected_calls": 0,
+    "failed_calls": 0
+  },
+  "cmdstat_ping": {
+    "calls": 12,
+    "usec": 8,
+    "usec_per_call": 0.67,
+    "rejected_calls": 0,
+    "failed_calls": 0
+  }
+}
