@@ -90,7 +90,9 @@ python scripts/bench.py --tasks 10000 --task sleep_ms --sleep-ms 10   # one run 
 
 There are two modes. A **burst** run (the default) submits every task at once to measure maximum throughput, so its latency includes time spent in the backlog. A **rate** run (`--rate R --duration S`) is open loop: it submits R tasks/s on a fixed schedule whether or not earlier tasks have finished, which shows latency at a given load. It also records how far behind schedule the client fell (`submit_lag_ms`). The metric definitions are at the top of `scripts/bench.py`.
 
-The matrix script runs `docker compose down -v` before each run, which **deletes the stack's data**. Both scripts need the dev requirements (`pip install -r requirements-dev.txt`).
+To judge a change, compare commits with `scripts/ab_compare.sh NAME BEFORE AFTER PAIRS profile|bench ...`, which alternates runs of the two commits so that the machine's speed drifting between runs affects both equally. `scripts/bench_report.py` prints medians over repeated runs.
+
+The matrix and A/B scripts run `docker compose down -v` before each run, which **deletes the stack's data**. Both scripts need the dev requirements (`pip install -r requirements-dev.txt`).
 
 ## Possible next steps
 
