@@ -98,7 +98,9 @@ def environment() -> dict:
     ncpu, mem, version = docker.split("|") if docker else (None, None, None)
     return {
         "commit": run(["git", "rev-parse", "--short", "HEAD"]),
-        "uncommitted_changes": bool(run(["git", "status", "--porcelain", "--untracked-files=no"])),
+        # Results are rewritten by every run, so they don't count as code changes.
+        "uncommitted_changes": bool(run(["git", "status", "--porcelain", "--untracked-files=no",
+                                         "--", ".", ":(exclude)bench/results"])),
         "host": platform.platform(),
         "cpu": cpu,
         "docker_cpus": int(ncpu) if ncpu else None,
