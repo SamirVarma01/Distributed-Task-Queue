@@ -1,0 +1,6 @@
+start_time,query_time,lock_time,rows_examined,sql_text
+2026-10-26 16:03:22.700975,0:00:00.108038,0:00:00.000001,0,"INSERT INTO tasks (id, name, queue, payload, status, attempts, max_retries, error, worker_id, created_at, run_at, enqueued_at, started_at, finished_at) VALUES ('4dc79c26-0b61-45d5-84d0-1c6efc690903', "
+2026-10-26 16:04:04.267358,0:00:00.116715,0:00:00.000013,1000,"SELECT COUNT(*) FROM tasks WHERE status IN ('succeeded', 'dead', 'cancelled') AND id IN ('bd8e403b-e497-4250-8fc9-839e37ecf739', '3621e273-3d21-4032-b194-d07bdc00e3a3', '194572c3-8b69-4ad6-a828-ec4097"
+2026-10-26 16:04:29.471265,0:00:00.156069,0:00:00.000985,1000,"SELECT COUNT(*) FROM tasks WHERE status IN ('succeeded', 'dead', 'cancelled') AND id IN ('673dd796-8949-444d-8104-165f39df27af', '0cc36e8c-8677-43a6-a6c8-89334ff2625b', '141510ca-62ab-4f42-9481-b61f27"
+2026-10-26 16:04:46.258066,0:00:00.158215,0:00:00,1000,"SELECT COUNT(*) FROM tasks WHERE status IN ('succeeded', 'dead', 'cancelled') AND id IN ('02aee95b-8375-4103-b000-8dca84dc5a34', '94eebb21-0cea-4f1d-9a0c-f5c58bc35734', 'f50f638a-3e15-4dbe-a20d-0ac22a"
+2026-10-26 16:04:50.655749,0:00:00.131959,0:00:00.000002,1000,"SELECT COUNT(*) FROM tasks WHERE status IN ('succeeded', 'dead', 'cancelled') AND id IN ('03c334db-4dca-48b6-a3e8-38fafae2c18f', 'fc299c5f-8a65-4167-a692-109495c00613', '73336af2-046b-4ec9-bb8e-a8367a"

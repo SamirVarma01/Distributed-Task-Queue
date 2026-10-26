@@ -1,0 +1,2 @@
+start_time,query_time,lock_time,rows_examined,sql_text
+2026-10-26 16:06:08.302591,0:00:00.133332,0:00:00.000001,1000,"SELECT COUNT(*) FROM tasks WHERE status IN ('succeeded', 'dead', 'cancelled') AND id IN ('5e62b7f7-4022-4d01-afd6-3ca6b4f6d50d', 'bef2d759-9995-436d-9de8-b2bf29af2295', '7a014ee5-9f29-4358-b698-7296f0"

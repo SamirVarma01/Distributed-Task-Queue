@@ -1,0 +1,16 @@
+digest_text,count,per_task,total_ms,avg_ms,max_ms,lock_ms,rows_affected
+COMMIT,59947,2.0,457589.2,7.633,454.5,0.0,0
+SELECT COUNT ( * ) FROM `tasks` WHERE STATUS IN (...) AND `id` IN (...),2130,0.07,23198.8,10.891,146.6,3.2,0
+"UPDATE `tasks` SET STATUS = ? , `attempts` = ( `tasks` . `attempts` + ? ) , `worker_id` = ? , `started_at` = ? WHERE `tasks` . `id` = ? AND `tasks` . `status` IN (...)",29992,1.0,8908.7,0.297,48.7,34.1,29998
+ROLLBACK,120177,4.01,8892.9,0.074,86.3,0.0,0
+"UPDATE `tasks` SET STATUS = ? , `result` = ? , ERROR = ? , `finished_at` = ? WHERE `tasks` . `id` = ?",29989,1.0,6763.2,0.226,58.9,30.3,29996
+"SELECT `tasks` . `id` AS `tasks_id` , `tasks` . `name` AS `tasks_name` , `tasks` . `queue` AS `tasks_queue` , `tasks` . `payload` AS `tasks_payload` , `tasks` . `status` AS `tasks_status` , `tasks` . `attempts` AS `tasks_attempts` , `tasks` . `max_retries` AS `tasks_max_retries` , `tasks` . `result` AS `tasks_result` , `tasks` . `error` AS `tasks_error` , `tasks` . `worker_id` AS `tasks_worker_id` , `tasks` . `created_at` AS `tasks_created_at` , `tasks` . `run_at` AS `tasks_run_at` , `tasks` . `enqueued_at` AS `tasks_enqueued_at` , `tasks` . `started_at` AS `tasks_started_at` , `tasks` . `finished_at` AS `tasks_finished_at` FROM `tasks` WHERE `tasks` . `id` = ?",29975,1.0,6087.4,0.203,48.7,34.2,0
+"INSERT INTO `tasks` ( `id` , NAME , `queue` , `payload` , STATUS , `attempts` , `max_retries` , ERROR , `worker_id` , `created_at` , `run_at` , `enqueued_at` , `started_at` , `finished_at` ) VALUES (...)",29991,1.0,5175.2,0.173,53.8,11.1,29998
+UPDATE `tasks` SET `enqueued_at` = ? WHERE `tasks` . `id` IN (...),60,0.0,569.5,9.492,27.4,0.1,30000
+TRUNCATE `performance_schema` . `events_statements_summary_by_digest`,1,0.0,35.9,35.948,35.9,0.0,0
+SHOW ENGINE `INNODB` STATUS,8,0.0,8.4,1.056,2.1,0.0,0
+SELECT ?,7,0.0,7.9,1.13,3.7,0.0,0
+SHOW GLOBAL STATUS,2,0.0,7.1,3.543,5.7,0.0,0
+"SELECT `tasks` . `id` , `tasks` . `name` , `tasks` . `queue` , `tasks` . `payload` , `tasks` . `status` , `tasks` . `attempts` , `tasks` . `max_retries` , `tasks` . `result` , `tasks` . `error` , `tasks` . `worker_id` , `tasks` . `created_at` , `tasks` . `run_at` , `tasks` . `enqueued_at` , `tasks` . `started_at` , `tasks` . `finished_at` FROM `tasks` WHERE `tasks` . `status` = ? AND `tasks` . `enqueued_at` IS NULL AND `tasks` . `created_at` < ? LIMIT ?",10,0.0,5.6,0.559,3.4,0.0,0
+SET NAMES `utf8mb4`,16,0.0,1.0,0.061,0.3,0.0,0
+SET `AUTOCOMMIT` = ?,8,0.0,0.3,0.037,0.1,0.0,0
