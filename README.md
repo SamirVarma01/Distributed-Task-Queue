@@ -78,6 +78,17 @@ python -m venv .venv && .venv/bin/pip install -r requirements.txt -r requirement
 .venv/bin/pytest
 ```
 
+## Benchmarks
+
+```sh
+scripts/run_bench_matrix.sh                    # 10000 noop tasks at 1, 5 and 10 workers
+python scripts/bench.py --tasks 10000 --task sleep_ms --sleep-ms 10   # one run against the current stack
+```
+
+`bench.py` submits the tasks through `POST /tasks/batch`, waits until all of them finish, and computes throughput and latency from the tasks' `created_at`, `started_at` and `finished_at` timestamps in MySQL. Each run writes `bench/results/<label>.json` (with the commit, CPU and Docker resources it ran on) and adds a row to `bench/results/summary.md`. It is a burst benchmark: every task is submitted at once, so latency includes time spent in the backlog. The metric definitions are at the top of `scripts/bench.py`.
+
+The matrix script runs `docker compose down -v` before each run, which **deletes the stack's data**. Both scripts need the dev requirements (`pip install -r requirements-dev.txt`).
+
 ## Possible next steps
 
 - Per-task timeouts (run tasks in a subprocess and kill it when time runs out).
