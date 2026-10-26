@@ -17,7 +17,11 @@ services:
     # No binary log: it exists for replication and point-in-time recovery, which this
     # stack doesn't use, and keeping it in step with InnoDB costs every commit a second
     # fsync. Commits stay durable through InnoDB's redo log. See "MySQL settings" in the README.
-    command: ["mysqld", "--disable-log-bin"]
+    # MYSQL_FLUSH_LOG_AT_TRX_COMMIT=2 is an opt-in speedup that is NOT crash-safe (README).
+    command:
+      - mysqld
+      - --disable-log-bin
+      - --innodb-flush-log-at-trx-commit=${MYSQL_FLUSH_LOG_AT_TRX_COMMIT:-1}
     environment:
       MYSQL_DATABASE: dtq
       MYSQL_USER: dtq
