@@ -1,0 +1,33 @@
+start_time,query_time,lock_time,rows_examined,sql_text
+2026-10-26 16:34:13.532828,0:00:00.108248,0:00:00.000001,0,"INSERT INTO tasks (id, name, queue, payload, status, attempts, max_retries, error, worker_id, created_at, run_at, enqueued_at, started_at, finished_at) VALUES ('7879c9ca-0694-4bf5-8971-b1b58f59b566', "
+2026-10-26 16:34:13.603874,0:00:00.117558,0:00:00,0,"INSERT INTO tasks (id, name, queue, payload, status, attempts, max_retries, error, worker_id, created_at, run_at, enqueued_at, started_at, finished_at) VALUES ('338a7219-1715-4ed1-8ed9-8841313a20c8', "
+2026-10-26 16:34:16.592800,0:00:00.198488,0:00:00.000001,0,"INSERT INTO tasks (id, name, queue, payload, status, attempts, max_retries, error, worker_id, created_at, run_at, enqueued_at, started_at, finished_at) VALUES ('6e260ea1-c340-43fa-af1f-92110061bbf5', "
+2026-10-26 16:34:16.593619,0:00:00.156652,0:00:00.000001,0,"INSERT INTO tasks (id, name, queue, payload, status, attempts, max_retries, error, worker_id, created_at, run_at, enqueued_at, started_at, finished_at) VALUES ('e7b3c6bb-cd43-4cf5-9cf5-ebfbbac2e309', "
+2026-10-26 16:34:16.594191,0:00:00.139488,0:00:00.000001,0,"INSERT INTO tasks (id, name, queue, payload, status, attempts, max_retries, error, worker_id, created_at, run_at, enqueued_at, started_at, finished_at) VALUES ('498da9f9-8367-435e-b438-9c44a0b4a5c7', "
+2026-10-26 16:34:16.595328,0:00:00.143624,0:00:00.000001,0,"INSERT INTO tasks (id, name, queue, payload, status, attempts, max_retries, error, worker_id, created_at, run_at, enqueued_at, started_at, finished_at) VALUES ('5a4a443e-48ff-401d-bc12-b77d0407ef83', "
+2026-10-26 16:34:17.208721,0:00:00.146262,0:00:00,0,COMMIT
+2026-10-26 16:34:17.218500,0:00:00.105552,0:00:00,0,COMMIT
+2026-10-26 16:34:18.306339,0:00:01.049462,0:00:00,0,COMMIT
+2026-10-26 16:34:18.357270,0:00:01.049470,0:00:00,0,COMMIT
+2026-10-26 16:34:18.511108,0:00:01.173903,0:00:00,0,COMMIT
+2026-10-26 16:34:18.512003,0:00:01.141408,0:00:00,0,COMMIT
+2026-10-26 16:34:18.516389,0:00:01.161564,0:00:00,0,COMMIT
+2026-10-26 16:34:18.522054,0:00:01.066896,0:00:00,0,COMMIT
+2026-10-26 16:34:18.522973,0:00:01.175734,0:00:00,0,COMMIT
+2026-10-26 16:34:19.115974,0:00:00.381004,0:00:00.000002,500,"UPDATE tasks SET enqueued_at='2026-10-26 16:34:18.720723' WHERE tasks.id IN ('d8a17308-3637-455e-b3bb-966f78e47291', '7640a790-9df0-47be-81ef-8a403943b2f7', '7a1a6ef1-b123-48db-805e-d2e0a88c96df', '21"
+2026-10-26 16:34:19.152113,0:00:00.248306,0:00:00.000034,0,"INSERT INTO tasks (id, name, queue, payload, status, attempts, max_retries, error, worker_id, created_at, run_at, enqueued_at, started_at, finished_at) VALUES ('937f4ddb-9e9c-4167-b7c9-2e9693465613', "
+2026-10-26 16:34:19.181409,0:00:00.453857,0:00:00.000011,500,"UPDATE tasks SET enqueued_at='2026-10-26 16:34:18.722790' WHERE tasks.id IN ('f24f87e6-a2fa-40e7-be82-280ff2c88f3b', '7aa37646-beaa-466b-9ad9-ea6ff389a86d', 'a0978a27-a2bb-41fa-becb-f0d4ae4a3763', '8a"
+2026-10-26 16:34:19.515256,0:00:00.111843,0:00:00,0,COMMIT
+2026-10-26 16:34:19.548710,0:00:00.133244,0:00:00,0,COMMIT
+2026-10-26 16:34:19.548941,0:00:00.130811,0:00:00,0,COMMIT
+2026-10-26 16:34:20.917257,0:00:00.244683,0:00:00,0,"INSERT INTO tasks (id, name, queue, payload, status, attempts, max_retries, error, worker_id, created_at, run_at, enqueued_at, started_at, finished_at) VALUES ('5fc569f8-ddc7-4241-a533-f387a5cb9c0e', "
+2026-10-26 16:34:20.917257,0:00:00.268650,0:00:00,0,"INSERT INTO tasks (id, name, queue, payload, status, attempts, max_retries, error, worker_id, created_at, run_at, enqueued_at, started_at, finished_at) VALUES ('541ee730-a3e6-4991-bad4-fde9d73f69fe', "
+2026-10-26 16:34:20.917258,0:00:00.252858,0:00:00.000001,0,"INSERT INTO tasks (id, name, queue, payload, status, attempts, max_retries, error, worker_id, created_at, run_at, enqueued_at, started_at, finished_at) VALUES ('7ec20970-9079-40bb-8c52-cbd7a9bc2c7c', "
+2026-10-26 16:34:20.917850,0:00:00.285619,0:00:00.000001,0,"INSERT INTO tasks (id, name, queue, payload, status, attempts, max_retries, error, worker_id, created_at, run_at, enqueued_at, started_at, finished_at) VALUES ('01e6cfd6-7e03-4a11-9978-64531bbe0a7c', "
+2026-10-26 16:34:20.918279,0:00:00.247263,0:00:00.000001,0,"INSERT INTO tasks (id, name, queue, payload, status, attempts, max_retries, error, worker_id, created_at, run_at, enqueued_at, started_at, finished_at) VALUES ('2f2eb538-97e9-4303-abf8-c78f6d54c063', "
+2026-10-26 16:34:20.920874,0:00:00.249017,0:00:00.000001,0,"INSERT INTO tasks (id, name, queue, payload, status, attempts, max_retries, error, worker_id, created_at, run_at, enqueued_at, started_at, finished_at) VALUES ('3fdd039d-ce73-4d30-af6e-6ac97c94fb5a', "
+2026-10-26 16:34:20.921212,0:00:00.265744,0:00:00.000002,0,"INSERT INTO tasks (id, name, queue, payload, status, attempts, max_retries, error, worker_id, created_at, run_at, enqueued_at, started_at, finished_at) VALUES ('fa301e05-2f17-4e16-9f4f-53257d708374', "
+2026-10-26 16:34:20.921490,0:00:00.268298,0:00:00.000001,0,"INSERT INTO tasks (id, name, queue, payload, status, attempts, max_retries, error, worker_id, created_at, run_at, enqueued_at, started_at, finished_at) VALUES ('f83983fa-955c-4f1b-a9fb-3562c70b412d', "
+2026-10-26 16:35:12.699995,0:00:00.201773,0:00:00.000006,1000,"SELECT COUNT(*) FROM tasks WHERE status IN ('succeeded', 'dead', 'cancelled') AND id IN ('a4cf2c94-b13c-49e7-9ef9-79272045c5fb', 'f8e30979-ec07-461f-9005-ca6bb5f53567', '6d8aee97-ff08-4eb3-b3f0-34b420"
+2026-10-26 16:35:33.527649,0:00:00.106032,0:00:00,1000,"SELECT COUNT(*) FROM tasks WHERE status IN ('succeeded', 'dead', 'cancelled') AND id IN ('cc375b93-c4bd-48f6-898e-6b757b8e336d', '002a1c53-d94a-4a31-a568-166b3597e25e', 'e13e0b4f-242e-4713-b8ea-ed2058"
+2026-10-26 16:35:43.833851,0:00:00.146815,0:00:00.000001,1000,"SELECT COUNT(*) FROM tasks WHERE status IN ('succeeded', 'dead', 'cancelled') AND id IN ('77cfc200-cb45-4c68-8e3b-1c3ce1facc72', '1a2c4b63-269e-4253-82bb-1606b625944b', '59f90107-ed72-4c26-92eb-a41c6a"
