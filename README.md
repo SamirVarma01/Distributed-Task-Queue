@@ -35,6 +35,7 @@ curl localhost:8000/stats
 | Endpoint | Purpose |
 |---|---|
 | `POST /tasks` | Submit `{name, payload, queue, max_retries, delay_seconds}` |
+| `POST /tasks/batch` | Submit `{tasks: [...]}`, up to 1000 at once, in one transaction and one Redis round trip; returns `{ids}` |
 | `GET /tasks/{id}` | Status, attempts, result or error |
 | `GET /tasks?status=dead&queue=low` | List tasks |
 | `POST /tasks/{id}/cancel` | Cancel a queued or retrying task |

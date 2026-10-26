@@ -62,6 +62,16 @@ class Broker:
         else:
             self.schedule(queue, task_id, run_at.replace(tzinfo=timezone.utc).timestamp())
 
+    def send_many(self, tasks: list[tuple[str, str, datetime | None]]) -> None:
+        """send() for many (queue, task_id, run_at) tuples in one round trip."""
+        pipe = self.r.pipeline(transaction=False)
+        for queue, task_id, run_at in tasks:
+            if run_at is None:
+                pipe.xadd(stream_key(queue), {"task_id": task_id})
+            else:
+                pipe.zadd(DELAYED_KEY, {f"{queue}|{task_id}": run_at.replace(tzinfo=timezone.utc).timestamp()})
+        pipe.execute()
+
     def promote_due(self, limit: int = 100) -> int:
         return self._promote(keys=[DELAYED_KEY], args=[time.time(), limit, STREAM_PREFIX])
 

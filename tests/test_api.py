@@ -82,3 +82,51 @@ def test_submit_records_enqueued_at_and_run_at(client, submit):
     now, later = get_task(now_id), get_task(later_id)
     assert now.enqueued_at is not None and now.run_at is None
     assert later.enqueued_at is not None and later.run_at > later.created_at
+
+
+def test_batch_submit_creates_and_enqueues_all(client):
+    resp = client.post("/tasks/batch", json={"tasks": [
+        {"name": "add", "payload": {"a": 1, "b": 1}},
+        {"name": "add", "payload": {"a": 2, "b": 2}, "queue": "high"},
+        {"name": "add", "payload": {"a": 3, "b": 3}, "delay_seconds": 60},
+    ]})
+
+    assert resp.status_code == 202
+    tasks = [get_task(i) for i in resp.json()["ids"]]
+    assert [t.status for t in tasks] == [TaskStatus.QUEUED] * 3
+    assert all(t.enqueued_at is not None for t in tasks)
+    assert api.broker.r.xlen("dtq:stream:default") == 1
+    assert api.broker.r.xlen("dtq:stream:high") == 1
+    assert api.broker.r.zcard("dtq:delayed") == 1
+
+
+def test_batch_submit_is_all_or_nothing_on_validation(client):
+    resp = client.post("/tasks/batch", json={"tasks": [
+        {"name": "add", "payload": {"a": 1, "b": 1}},
+        {"name": "add", "payload": {"a": 1}},
+    ]})
+
+    assert resp.status_code == 400
+    assert resp.json()["detail"].startswith("tasks[1]:")
+    assert client.get("/tasks").json() == []
+    assert client.post("/tasks/batch", json={"tasks": []}).status_code == 422
+
+
+def test_batch_submit_marks_all_dead_when_redis_is_down(client, monkeypatch):
+    def fail(*_):
+        raise redis.ConnectionError("down")
+
+    monkeypatch.setattr(api.broker, "send_many", fail)
+    resp = client.post("/tasks/batch", json={"tasks": [{"name": "noop"}, {"name": "noop"}]})
+
+    assert resp.status_code == 503
+    assert [t["status"] for t in client.get("/tasks").json()] == ["dead", "dead"]
+
+
+def test_batch_submitted_tasks_run(client, make_worker):
+    ids = client.post("/tasks/batch", json={"tasks": [{"name": "noop"}] * 5}).json()["ids"]
+    w = make_worker()
+    while w.step():
+        pass
+
+    assert {get_task(i).status for i in ids} == {TaskStatus.SUCCEEDED}

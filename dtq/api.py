@@ -51,8 +51,16 @@ class TaskOut(BaseModel):
     finished_at: datetime | None = None
 
 
-@app.post("/tasks", response_model=TaskOut, status_code=202)
-def submit_task(body: SubmitTask):
+class SubmitBatch(BaseModel):
+    tasks: list[SubmitTask] = Field(min_length=1, max_length=1000)
+
+
+class BatchOut(BaseModel):
+    ids: list[str]
+
+
+def _new_task(body: SubmitTask) -> Task:
+    """Validate a submission and build its row. Raises HTTPException(400) if invalid."""
     fn = registry.get(body.name)
     if fn is None:
         raise HTTPException(400, f"unknown task {body.name!r}; available: {registry.names()}")
@@ -62,13 +70,18 @@ def submit_task(body: SubmitTask):
         registry.check_payload(fn, body.payload)
     except TypeError as exc:
         raise HTTPException(400, f"bad payload for {body.name!r}: {exc}")
+    run_at = utcnow() + timedelta(seconds=body.delay_seconds) if body.delay_seconds else None
+    return Task(name=body.name, queue=body.queue, payload=body.payload,
+                max_retries=body.max_retries, run_at=run_at)
+
+
+@app.post("/tasks", response_model=TaskOut, status_code=202)
+def submit_task(body: SubmitTask):
+    task = _new_task(body)
 
     # MySQL first: a worker can only pick up a task whose row already exists. If we
     # crash before enqueued_at is set, the reconciler re-sends the task.
     with SessionLocal() as s:
-        run_at = utcnow() + timedelta(seconds=body.delay_seconds) if body.delay_seconds else None
-        task = Task(name=body.name, queue=body.queue, payload=body.payload,
-                    max_retries=body.max_retries, run_at=run_at)
         s.add(task)
         s.commit()
 
@@ -81,6 +94,33 @@ def submit_task(body: SubmitTask):
         task.enqueued_at = utcnow()
         s.commit()
     return task
+
+
+@app.post("/tasks/batch", response_model=BatchOut, status_code=202)
+def submit_batch(body: SubmitBatch):
+    """Submit up to 1000 tasks with one transaction and one Redis round trip. If any task
+    is invalid, none are created. Same ordering and failure handling as POST /tasks."""
+    new = []
+    for i, item in enumerate(body.tasks):
+        try:
+            new.append(_new_task(item))
+        except HTTPException as exc:
+            raise HTTPException(400, f"tasks[{i}]: {exc.detail}")
+
+    with SessionLocal() as s:
+        s.add_all(new)
+        s.commit()
+        ids = [t.id for t in new]
+        batch = update(Task).where(Task.id.in_(ids))
+        try:
+            broker.send_many([(t.queue, t.id, t.run_at) for t in new])
+        except redis.RedisError as exc:
+            s.execute(batch.values(status=TaskStatus.DEAD, error=f"enqueue failed: {exc}", finished_at=utcnow()))
+            s.commit()
+            raise HTTPException(503, "broker unavailable")
+        s.execute(batch.values(enqueued_at=utcnow()))
+        s.commit()
+    return {"ids": ids}
 
 
 @app.get("/tasks/{task_id}", response_model=TaskOut)
