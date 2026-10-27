@@ -29,6 +29,27 @@ end
 return #due
 """
 
+# Heartbeat and ack only if the message is still pending under this consumer. A worker
+# that stalled past the visibility timeout has had its message reclaimed: refreshing it
+# would take it back from the worker now running it, and acking it would delete the
+# message out from under that worker, stranding the task if that worker then crashed.
+# KEYS[1] stream; ARGV group, message id, consumer. Returns 1 if done, 0 if not owned.
+_OWNER_CHECK_LUA = """
+local p = redis.call('XPENDING', KEYS[1], ARGV[1], ARGV[2], ARGV[2], 1)
+if #p == 0 or p[1][2] ~= ARGV[3] then
+  return 0
+end
+"""
+_TOUCH_LUA = _OWNER_CHECK_LUA + """
+redis.call('XCLAIM', KEYS[1], ARGV[1], ARGV[3], 0, ARGV[2], 'JUSTID')
+return 1
+"""
+_ACK_LUA = _OWNER_CHECK_LUA + """
+redis.call('XACK', KEYS[1], ARGV[1], ARGV[2])
+redis.call('XDEL', KEYS[1], ARGV[2])
+return 1
+"""
+
 
 def stream_key(queue: str) -> str:
     return f"{STREAM_PREFIX}{queue}"
@@ -38,6 +59,8 @@ class Broker:
     def __init__(self, url: str = config.REDIS_URL):
         self.r = redis.Redis.from_url(url, decode_responses=True)
         self._promote = self.r.register_script(_PROMOTE_LUA)
+        self._touch = self.r.register_script(_TOUCH_LUA)
+        self._ack = self.r.register_script(_ACK_LUA)
 
     def ping(self) -> bool:
         return self.r.ping()
@@ -127,15 +150,15 @@ class Broker:
             if start == "0-0":
                 return None
 
-    def touch(self, consumer: str, stream: str, msg_id: str) -> None:
-        """Reset a pending message's idle time so it is not reclaimed (heartbeat)."""
-        self.r.xclaim(stream, config.CONSUMER_GROUP, consumer, 0, [msg_id], justid=True)
+    def touch(self, consumer: str, stream: str, msg_id: str) -> bool:
+        """Reset a pending message's idle time so it is not reclaimed (heartbeat).
+        Returns False, doing nothing, if another consumer has since reclaimed it."""
+        return bool(self._touch(keys=[stream], args=[config.CONSUMER_GROUP, msg_id, consumer]))
 
-    def ack(self, stream: str, msg_id: str) -> None:
-        pipe = self.r.pipeline()
-        pipe.xack(stream, config.CONSUMER_GROUP, msg_id)
-        pipe.xdel(stream, msg_id)
-        pipe.execute()
+    def ack(self, consumer: str, stream: str, msg_id: str) -> bool:
+        """Ack and delete a message this consumer owns. Returns False, doing nothing, if
+        it is no longer pending under this consumer (reclaimed by another, or acked)."""
+        return bool(self._ack(keys=[stream], args=[config.CONSUMER_GROUP, msg_id, consumer]))
 
     def stats(self, queues: list[str]) -> dict:
         out = {"delayed": self.r.zcard(DELAYED_KEY), "queues": {}}

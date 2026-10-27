@@ -308,3 +308,41 @@ def test_stalled_worker_cannot_fail_a_task_another_worker_is_running(submit, mak
     task = get_task(task_id)
     assert (task.status, task.attempts, task.worker_id) == (TaskStatus.RUNNING, 2, "survivor")
     assert stalled.broker.r.zcard("dtq:delayed") == 0
+
+
+def owner(broker, stream: str, msg_id: str) -> str | None:
+    pending = broker.r.xpending_range(stream, config.CONSUMER_GROUP, msg_id, msg_id, 1)
+    return pending[0]["consumer"] if pending else None
+
+
+def test_stalled_worker_cannot_heartbeat_or_ack_a_reclaimed_message(submit, make_worker):
+    submit("noop")
+    stalled, survivor = make_worker("stalled"), make_worker("survivor")
+    stream, msg_id, _ = stalled.broker.read(stalled.id, config.QUEUES)
+    assert survivor.broker.reclaim(survivor.id, "default", min_idle_ms=0) is not None
+
+    assert stalled.broker.touch(stalled.id, stream, msg_id) is False
+    assert stalled.broker.ack(stalled.id, stream, msg_id) is False
+    assert owner(survivor.broker, stream, msg_id) == "survivor"
+
+    assert survivor.broker.touch(survivor.id, stream, msg_id) is True
+    assert survivor.broker.ack(survivor.id, stream, msg_id) is True
+    assert pending_count(survivor.broker, "default") == 0
+    assert survivor.broker.r.xlen(stream) == 0
+
+
+def test_stalled_worker_does_not_delete_the_message_another_worker_is_running(submit, make_worker):
+    """If the stalled worker acked the message the survivor is running and the survivor
+    then crashed, nothing would be left to deliver the task: stuck in 'running' forever."""
+    task_id = submit("noop")
+    stalled, survivor = make_worker("stalled"), make_worker("survivor")
+    stream, msg_id, fields = stalled.broker.read(stalled.id, config.QUEUES)
+    survivor_msg = survivor.broker.reclaim(survivor.id, "default", min_idle_ms=0)
+    survivor._claim(task_id, reclaimed=True)  # survivor is running the task
+
+    stalled.handle(stream, msg_id, fields)  # its fresh claim is refused, so it acks
+    assert owner(survivor.broker, stream, msg_id) == "survivor"
+
+    survivor.handle(*survivor_msg, reclaimed=True)  # e.g. after the survivor crashed
+    assert get_task(task_id).status == TaskStatus.SUCCEEDED
+    assert pending_count(survivor.broker, "default") == 0

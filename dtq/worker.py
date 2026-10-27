@@ -29,7 +29,9 @@ class Heartbeat(threading.Thread):
     def run(self):
         while not self._stop_event.wait(config.HEARTBEAT_SECONDS):
             try:
-                self.broker.touch(self.consumer, self.stream, self.msg_id)
+                if not self.broker.touch(self.consumer, self.stream, self.msg_id):
+                    log.warning("message %s was reclaimed by another worker; heartbeat stopped", self.msg_id)
+                    return
             except Exception:
                 log.exception("heartbeat failed for %s", self.msg_id)
 
@@ -116,7 +118,7 @@ class Worker:
     def handle(self, stream: str, msg_id: str, fields: dict, reclaimed: bool = False):
         task = self._claim(fields.get("task_id"), reclaimed)
         if task is None:  # already running, finished, cancelled, or unknown: drop the message
-            self.broker.ack(stream, msg_id)
+            self.broker.ack(self.id, stream, msg_id)
             return
 
         heartbeat = Heartbeat(self.broker, self.id, stream, msg_id)
@@ -127,7 +129,7 @@ class Worker:
             heartbeat.stop()
         # Ack only once the outcome is recorded. If recording it raised (MySQL or Redis
         # down), the message stays pending and is reclaimed after the visibility timeout.
-        self.broker.ack(stream, msg_id)
+        self.broker.ack(self.id, stream, msg_id)
 
     def _claim(self, task_id: str | None, reclaimed: bool) -> Task | None:
         """Mark the task running. The conditional update makes duplicate deliveries
