@@ -1,0 +1,442 @@
+===== t=0s
+
+=====================================
+2026-10-27 05:31:14 281472833797888 INNODB MONITOR OUTPUT
+=====================================
+Per second averages calculated from the last 12 seconds
+-----------------
+BACKGROUND THREAD
+-----------------
+srv_master_thread loops: 4 srv_active, 0 srv_shutdown, 8 srv_idle
+srv_master_thread log flush and writes: 0
+----------
+SEMAPHORES
+----------
+OS WAIT ARRAY INFO: reservation count 84
+OS WAIT ARRAY INFO: signal count 82
+RW-shared spins 0, rounds 0, OS waits 0
+RW-excl spins 0, rounds 0, OS waits 0
+RW-sx spins 0, rounds 0, OS waits 0
+Spin rounds per wait: 0.00 RW-shared, 0.00 RW-excl, 0.00 RW-sx
+------------
+TRANSACTIONS
+------------
+Trx id counter 3810
+Purge done for trx's n:o < 3810 undo n:o < 0 state: running but idle
+History list length 322
+LIST OF TRANSACTIONS FOR EACH SESSION:
+---TRANSACTION 562948472840080, not started
+0 lock struct(s), heap size 1128, 0 row lock(s)
+---TRANSACTION 562948472839272, not started
+0 lock struct(s), heap size 1128, 0 row lock(s)
+---TRANSACTION 562948472838464, not started
+0 lock struct(s), heap size 1128, 0 row lock(s)
+---TRANSACTION 562948472837656, not started
+0 lock struct(s), heap size 1128, 0 row lock(s)
+---TRANSACTION 562948472836848, not started
+0 lock struct(s), heap size 1128, 0 row lock(s)
+---TRANSACTION 562948472836040, not started
+0 lock struct(s), heap size 1128, 0 row lock(s)
+---TRANSACTION 562948472835232, not started
+0 lock struct(s), heap size 1128, 0 row lock(s)
+---TRANSACTION 562948472834424, not started
+0 lock struct(s), heap size 1128, 0 row lock(s)
+---TRANSACTION 562948472833616, not started
+0 lock struct(s), heap size 1128, 0 row lock(s)
+---TRANSACTION 562948472832808, not started
+0 lock struct(s), heap size 1128, 0 row lock(s)
+---TRANSACTION 562948472832000, not started
+0 lock struct(s), heap size 1128, 0 row lock(s)
+---TRANSACTION 562948472831192, not started
+0 lock struct(s), heap size 1128, 0 row lock(s)
+---TRANSACTION 562948472830384, not started
+0 lock struct(s), heap size 1128, 0 row lock(s)
+---TRANSACTION 562948472829576, not started
+0 lock struct(s), heap size 1128, 0 row lock(s)
+--------
+FILE I/O
+--------
+I/O thread 0 state: waiting for completed aio requests (insert buffer thread)
+I/O thread 1 state: waiting for completed aio requests (read thread)
+I/O thread 2 state: waiting for completed aio requests (read thread)
+I/O thread 3 state: waiting for completed aio requests (read thread)
+I/O thread 4 state: waiting for completed aio requests (read thread)
+I/O thread 5 state: waiting for completed aio requests (write thread)
+I/O thread 6 state: waiting for completed aio requests (write thread)
+I/O thread 7 state: waiting for completed aio requests (write thread)
+I/O thread 8 state: waiting for completed aio requests (write thread)
+Pending normal aio reads: [0, 0, 0, 0] , aio writes: [0, 0, 0, 0] ,
+ ibuf aio reads:
+Pending flushes (fsync) log: 0; buffer pool: 0
+1056 OS file reads, 1928 OS file writes, 618 OS fsyncs
+82.50 reads/s, 32325 avg bytes/read, 150.63 writes/s, 48.28 fsyncs/s
+-------------------------------------
+INSERT BUFFER AND ADAPTIVE HASH INDEX
+-------------------------------------
+Ibuf: size 1, free list len 0, seg size 2, 0 merges
+merged operations:
+ insert 0, delete mark 0, delete 0
+discarded operations:
+ insert 0, delete mark 0, delete 0
+Hash table size 34679, node heap has 0 buffer(s)
+Hash table size 34679, node heap has 0 buffer(s)
+Hash table size 34679, node heap has 0 buffer(s)
+Hash table size 34679, node heap has 0 buffer(s)
+Hash table size 34679, node heap has 0 buffer(s)
+Hash table size 34679, node heap has 0 buffer(s)
+Hash table size 34679, node heap has 0 buffer(s)
+Hash table size 34679, node heap has 0 buffer(s)
+0.00 hash searches/s, 1256.56 non-hash searches/s
+---
+LOG
+---
+Log capacity                 104857600
+Log capacity used            104857600
+Log sequence number          30733021
+Log buffer assigned up to    30733021
+Log buffer completed up to   30733021
+Log written up to            30733021
+Log flushed up to            30733021
+Added dirty pages up to      30733021
+Pages flushed up to          29541429
+Last checkpoint at           29541429
+Log minimum file id is       9
+Log maximum file id is       9
+1673 log i/o's done, 128.69 log i/o's/second
+----------------------
+BUFFER POOL AND MEMORY
+----------------------
+Total large memory allocated 0
+Dictionary memory allocated 500307
+Buffer pool size   8192
+Free buffers       6808
+Database pages     1384
+Old database pages 492
+Modified db pages  542
+Pending reads      0
+Pending writes: LRU 0, flush list 0, single page 0
+Pages made young 1, not young 0
+0.08 youngs/s, 0.00 non-youngs/s
+Pages read 1028, created 356, written 214
+80.57 reads/s, 27.90 creates/s, 16.77 writes/s
+Buffer pool hit rate 982 / 1000, young-making rate 0 / 1000 not 0 / 1000
+Pages read ahead 0.00/s, evicted without access 0.00/s, Random read ahead 0.00/s
+LRU len: 1384, unzip_LRU len: 0
+I/O sum[0]:cur[5], unzip sum[0]:cur[0]
+--------------
+ROW OPERATIONS
+--------------
+0 queries inside InnoDB, 0 queries in queue
+0 read views open inside InnoDB
+Process ID=1, Main thread ID=281472879423232 , state=sleeping
+Number of rows inserted 500, updated 1500, deleted 0, read 2524
+41.66 inserts/s, 124.99 updates/s, 0.00 deletes/s, 210.32 reads/s
+Number of system rows inserted 8, updated 331, deleted 8, read 4919
+0.67 inserts/s, 27.58 updates/s, 0.67 deletes/s, 409.88 reads/s
+----------------------------
+END OF INNODB MONITOR OUTPUT
+============================
+
+
+===== t=10s
+
+=====================================
+2026-10-27 05:31:24 281472969133824 INNODB MONITOR OUTPUT
+=====================================
+Per second averages calculated from the last 10 seconds
+-----------------
+BACKGROUND THREAD
+-----------------
+srv_master_thread loops: 15 srv_active, 0 srv_shutdown, 8 srv_idle
+srv_master_thread log flush and writes: 0
+----------
+SEMAPHORES
+----------
+OS WAIT ARRAY INFO: reservation count 2971
+OS WAIT ARRAY INFO: signal count 2183
+RW-shared spins 0, rounds 0, OS waits 0
+RW-excl spins 0, rounds 0, OS waits 0
+RW-sx spins 0, rounds 0, OS waits 0
+Spin rounds per wait: 0.00 RW-shared, 0.00 RW-excl, 0.00 RW-sx
+------------
+TRANSACTIONS
+------------
+Trx id counter 41732
+Purge done for trx's n:o < 41390 undo n:o < 0 state: running but idle
+History list length 172
+LIST OF TRANSACTIONS FOR EACH SESSION:
+---TRANSACTION 562948472839272, not started
+0 lock struct(s), heap size 1128, 0 row lock(s)
+---TRANSACTION 562948472844928, not started
+0 lock struct(s), heap size 1128, 0 row lock(s)
+---TRANSACTION 562948472844120, not started
+0 lock struct(s), heap size 1128, 0 row lock(s)
+---TRANSACTION 562948472843312, not started
+0 lock struct(s), heap size 1128, 0 row lock(s)
+---TRANSACTION 562948472841696, not started
+0 lock struct(s), heap size 1128, 0 row lock(s)
+---TRANSACTION 562948472840888, not started
+0 lock struct(s), heap size 1128, 0 row lock(s)
+---TRANSACTION 562948472838464, not started
+0 lock struct(s), heap size 1128, 0 row lock(s)
+---TRANSACTION 562948472837656, not started flushing log
+0 lock struct(s), heap size 1128, 0 row lock(s)
+---TRANSACTION 562948472836848, not started
+0 lock struct(s), heap size 1128, 0 row lock(s)
+---TRANSACTION 562948472836040, not started flushing log
+0 lock struct(s), heap size 1128, 0 row lock(s)
+---TRANSACTION 562948472835232, not started
+0 lock struct(s), heap size 1128, 0 row lock(s)
+---TRANSACTION 562948472834424, not started
+0 lock struct(s), heap size 1128, 0 row lock(s)
+---TRANSACTION 562948472833616, not started
+0 lock struct(s), heap size 1128, 0 row lock(s)
+---TRANSACTION 562948472832808, not started
+0 lock struct(s), heap size 1128, 0 row lock(s)
+---TRANSACTION 562948472832000, not started
+0 lock struct(s), heap size 1128, 0 row lock(s)
+---TRANSACTION 562948472831192, not started
+0 lock struct(s), heap size 1128, 0 row lock(s)
+---TRANSACTION 562948472830384, not started
+0 lock struct(s), heap size 1128, 0 row lock(s)
+---TRANSACTION 562948472829576, not started
+0 lock struct(s), heap size 1128, 0 row lock(s)
+--------
+FILE I/O
+--------
+I/O thread 0 state: waiting for completed aio requests (insert buffer thread)
+I/O thread 1 state: waiting for completed aio requests (read thread)
+I/O thread 2 state: waiting for completed aio requests (read thread)
+I/O thread 3 state: waiting for completed aio requests (read thread)
+I/O thread 4 state: waiting for completed aio requests (read thread)
+I/O thread 5 state: waiting for completed aio requests (write thread)
+I/O thread 6 state: waiting for completed aio requests (write thread)
+I/O thread 7 state: waiting for completed aio requests (write thread)
+I/O thread 8 state: waiting for completed aio requests (write thread)
+Pending normal aio reads: [0, 0, 0, 0] , aio writes: [0, 0, 0, 0] ,
+ ibuf aio reads:
+Pending flushes (fsync) log: 1; buffer pool: 0
+1059 OS file reads, 40316 OS file writes, 10345 OS fsyncs
+0.29 reads/s, 16384 avg bytes/read, 3667.09 writes/s, 929.19 fsyncs/s
+-------------------------------------
+INSERT BUFFER AND ADAPTIVE HASH INDEX
+-------------------------------------
+Ibuf: size 1, free list len 0, seg size 2, 0 merges
+merged operations:
+ insert 0, delete mark 0, delete 0
+discarded operations:
+ insert 0, delete mark 0, delete 0
+Hash table size 34679, node heap has 0 buffer(s)
+Hash table size 34679, node heap has 0 buffer(s)
+Hash table size 34679, node heap has 0 buffer(s)
+Hash table size 34679, node heap has 0 buffer(s)
+Hash table size 34679, node heap has 0 buffer(s)
+Hash table size 34679, node heap has 0 buffer(s)
+Hash table size 34679, node heap has 0 buffer(s)
+Hash table size 34679, node heap has 0 buffer(s)
+0.00 hash searches/s, 43572.74 non-hash searches/s
+---
+LOG
+---
+Log capacity                 104857600
+Log capacity used            104857600
+Log sequence number          68571994
+Log buffer assigned up to    68571994
+Log buffer completed up to   68571994
+Log written up to            68571994
+Log flushed up to            68571994
+Added dirty pages up to      68571994
+Pages flushed up to          62718685
+Last checkpoint at           62718685
+Log minimum file id is       9
+Log maximum file id is       20
+35569 log i/o's done, 3389.60 log i/o's/second
+----------------------
+BUFFER POOL AND MEMORY
+----------------------
+Total large memory allocated 0
+Dictionary memory allocated 500307
+Buffer pool size   8192
+Free buffers       6016
+Database pages     2176
+Old database pages 783
+Modified db pages  901
+Pending reads      0
+Pending writes: LRU 0, flush list 0, single page 0
+Pages made young 1, not young 0
+0.00 youngs/s, 0.00 non-youngs/s
+Pages read 1031, created 1145, written 4556
+0.29 reads/s, 75.37 creates/s, 414.78 writes/s
+Buffer pool hit rate 1000 / 1000, young-making rate 0 / 1000 not 0 / 1000
+Pages read ahead 0.00/s, evicted without access 0.00/s, Random read ahead 0.00/s
+LRU len: 2176, unzip_LRU len: 0
+I/O sum[0]:cur[0], unzip sum[0]:cur[0]
+--------------
+ROW OPERATIONS
+--------------
+0 queries inside InnoDB, 0 queries in queue
+1 read views open inside InnoDB
+Process ID=1, Main thread ID=281472879423232 , state=sleeping
+Number of rows inserted 30500, updated 50370, deleted 0, read 218831
+2999.70 inserts/s, 4886.51 updates/s, 0.00 deletes/s, 21628.54 reads/s
+Number of system rows inserted 8, updated 331, deleted 8, read 4919
+0.00 inserts/s, 0.00 updates/s, 0.00 deletes/s, 0.00 reads/s
+----------------------------
+END OF INNODB MONITOR OUTPUT
+============================
+
+
+===== t=21s
+
+=====================================
+2026-10-27 05:31:35 281472833797888 INNODB MONITOR OUTPUT
+=====================================
+Per second averages calculated from the last 10 seconds
+-----------------
+BACKGROUND THREAD
+-----------------
+srv_master_thread loops: 25 srv_active, 0 srv_shutdown, 8 srv_idle
+srv_master_thread log flush and writes: 0
+----------
+SEMAPHORES
+----------
+OS WAIT ARRAY INFO: reservation count 3999
+OS WAIT ARRAY INFO: signal count 3345
+RW-shared spins 0, rounds 0, OS waits 0
+RW-excl spins 0, rounds 0, OS waits 0
+RW-sx spins 0, rounds 0, OS waits 0
+Spin rounds per wait: 0.00 RW-shared, 0.00 RW-excl, 0.00 RW-sx
+------------
+TRANSACTIONS
+------------
+Trx id counter 86820
+Purge done for trx's n:o < 86806 undo n:o < 0 state: running but idle
+History list length 94
+LIST OF TRANSACTIONS FOR EACH SESSION:
+---TRANSACTION 562948472839272, not started
+0 lock struct(s), heap size 1128, 0 row lock(s)
+---TRANSACTION 562948472844928, not started
+0 lock struct(s), heap size 1128, 0 row lock(s)
+---TRANSACTION 562948472844120, not started
+0 lock struct(s), heap size 1128, 0 row lock(s)
+---TRANSACTION 562948472843312, not started
+0 lock struct(s), heap size 1128, 0 row lock(s)
+---TRANSACTION 562948472841696, not started
+0 lock struct(s), heap size 1128, 0 row lock(s)
+---TRANSACTION 562948472840888, not started
+0 lock struct(s), heap size 1128, 0 row lock(s)
+---TRANSACTION 562948472840080, not started
+0 lock struct(s), heap size 1128, 0 row lock(s)
+---TRANSACTION 562948472838464, not started
+0 lock struct(s), heap size 1128, 0 row lock(s)
+---TRANSACTION 562948472837656, not started flushing log
+0 lock struct(s), heap size 1128, 0 row lock(s)
+---TRANSACTION 562948472836848, not started
+0 lock struct(s), heap size 1128, 0 row lock(s)
+---TRANSACTION 562948472835232, not started
+0 lock struct(s), heap size 1128, 0 row lock(s)
+---TRANSACTION 562948472833616, not started
+0 lock struct(s), heap size 1128, 0 row lock(s)
+---TRANSACTION 562948472832808, not started
+0 lock struct(s), heap size 1128, 0 row lock(s)
+---TRANSACTION 562948472832000, not started flushing log
+0 lock struct(s), heap size 1128, 0 row lock(s)
+---TRANSACTION 562948472831192, not started flushing log
+0 lock struct(s), heap size 1128, 0 row lock(s)
+---TRANSACTION 562948472830384, not started
+0 lock struct(s), heap size 1128, 0 row lock(s)
+---TRANSACTION 562948472829576, not started
+0 lock struct(s), heap size 1128, 0 row lock(s)
+---TRANSACTION 86819, ACTIVE 0 sec
+2 lock struct(s), heap size 1128, 1 row lock(s), undo log entries 1
+MySQL thread id 14, OS thread handle 281472966897408, query id 179998 172.18.0.9 dtq
+---TRANSACTION 86817, ACTIVE 0 sec
+2 lock struct(s), heap size 1128, 1 row lock(s), undo log entries 1
+MySQL thread id 16, OS thread handle 281472964660992, query id 179999 172.18.0.11 dtq freeing items
+SELECT tasks.id AS tasks_id, tasks.name AS tasks_name, tasks.queue AS tasks_queue, tasks.payload AS tasks_payload, tasks.status AS tasks_status, tasks.attempts AS tasks_attempts, tasks.max_retries AS tasks_max_retries, tasks.result AS tasks_result, tasks.error AS tasks_error, tasks.worker_id AS tasks_worker_id, tasks.created_at AS tasks_created_at, tasks.run_at AS tasks_run_at, tasks.enqueued_at AS tasks_enqueued_at, tasks.started_at AS tasks_started_at, tasks.finished_at AS tasks_finished_at 
+FROM tasks 
+WHERE tasks.id = '6a43fdcb-7602-473b-bfb3-a6aca1096ba2'
+Trx read view will not see trx with id >= 86820, sees < 86819
+--------
+FILE I/O
+--------
+I/O thread 0 state: waiting for completed aio requests (insert buffer thread)
+I/O thread 1 state: waiting for completed aio requests (read thread)
+I/O thread 2 state: waiting for completed aio requests (read thread)
+I/O thread 3 state: waiting for completed aio requests (read thread)
+I/O thread 4 state: waiting for completed aio requests (read thread)
+I/O thread 5 state: waiting for completed aio requests (write thread)
+I/O thread 6 state: waiting for completed aio requests (write thread)
+I/O thread 7 state: waiting for completed aio requests (write thread)
+I/O thread 8 state: waiting for completed aio requests (write thread)
+Pending normal aio reads: [0, 0, 0, 0] , aio writes: [0, 0, 0, 0] ,
+ ibuf aio reads:
+Pending flushes (fsync) log: 1; buffer pool: 0
+1059 OS file reads, 80074 OS file writes, 21817 OS fsyncs
+0.00 reads/s, 0 avg bytes/read, 3838.29 writes/s, 1107.52 fsyncs/s
+-------------------------------------
+INSERT BUFFER AND ADAPTIVE HASH INDEX
+-------------------------------------
+Ibuf: size 1, free list len 0, seg size 2, 0 merges
+merged operations:
+ insert 0, delete mark 0, delete 0
+discarded operations:
+ insert 0, delete mark 0, delete 0
+Hash table size 34679, node heap has 0 buffer(s)
+Hash table size 34679, node heap has 0 buffer(s)
+Hash table size 34679, node heap has 0 buffer(s)
+Hash table size 34679, node heap has 0 buffer(s)
+Hash table size 34679, node heap has 0 buffer(s)
+Hash table size 34679, node heap has 0 buffer(s)
+Hash table size 34679, node heap has 0 buffer(s)
+Hash table size 34679, node heap has 0 buffer(s)
+0.00 hash searches/s, 54103.89 non-hash searches/s
+---
+LOG
+---
+Log capacity                 104857600
+Log capacity used            104857600
+Log sequence number          85741193
+Log buffer assigned up to    85741193
+Log buffer completed up to   85741193
+Log written up to            85739973
+Log flushed up to            85738752
+Added dirty pages up to      85741193
+Pages flushed up to          79299014
+Last checkpoint at           74213154
+Log minimum file id is       9
+Log maximum file id is       26
+70713 log i/o's done, 3194.91 log i/o's/second
+----------------------
+BUFFER POOL AND MEMORY
+----------------------
+Total large memory allocated 0
+Dictionary memory allocated 500307
+Buffer pool size   8192
+Free buffers       5777
+Database pages     2415
+Old database pages 871
+Modified db pages  921
+Pending reads      0
+Pending writes: LRU 0, flush list 0, single page 0
+Pages made young 1, not young 0
+0.00 youngs/s, 0.00 non-youngs/s
+Pages read 1031, created 1384, written 9103
+0.00 reads/s, 23.07 creates/s, 438.98 writes/s
+Buffer pool hit rate 1000 / 1000, young-making rate 0 / 1000 not 0 / 1000
+Pages read ahead 0.00/s, evicted without access 0.00/s, Random read ahead 0.00/s
+LRU len: 2415, unzip_LRU len: 0
+I/O sum[0]:cur[0], unzip sum[0]:cur[0]
+--------------
+ROW OPERATIONS
+--------------
+0 queries inside InnoDB, 0 queries in queue
+1 read views open inside InnoDB
+Process ID=1, Main thread ID=281472879423232 , state=sleeping
+Number of rows inserted 30500, updated 72915, deleted 0, read 604650
+0.00 inserts/s, 2254.27 updates/s, 0.00 deletes/s, 38578.04 reads/s
+Number of system rows inserted 8, updated 331, deleted 8, read 4919
+0.00 inserts/s, 0.00 updates/s, 0.00 deletes/s, 0.00 reads/s
+----------------------------
+END OF INNODB MONITOR OUTPUT
+============================
