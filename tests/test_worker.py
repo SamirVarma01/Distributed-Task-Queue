@@ -269,3 +269,42 @@ def test_step_with_blocking_read_still_takes_priority_order(submit, make_worker)
     assert get_task(low).status == TaskStatus.QUEUED
     assert w.step(block_ms=100) is True
     assert w.step(block_ms=100) is False
+
+
+def reclaim_and_run(worker, monkeypatch):
+    """Let worker take over every pending message, as if their owners had stalled."""
+    monkeypatch.setattr(config, "VISIBILITY_TIMEOUT_MS", 0)
+    monkeypatch.setattr(config, "RECLAIM_INTERVAL_SECONDS", 0)
+    worker.step()
+
+
+def test_stalled_worker_cannot_overwrite_the_result_of_the_worker_that_took_over(submit, make_worker, monkeypatch):
+    task_id = submit("noop")
+    stalled, survivor = make_worker("stalled"), make_worker("survivor")
+    stalled.broker.read(stalled.id, config.QUEUES)
+    stale = stalled._claim(task_id, reclaimed=False)  # attempt 1, then the worker stalls
+
+    reclaim_and_run(survivor, monkeypatch)  # attempt 2 succeeds
+    assert get_task(task_id).status == TaskStatus.SUCCEEDED
+
+    stalled._on_failure(stale, "late failure from attempt 1")
+    task = get_task(task_id)
+    assert task.status == TaskStatus.SUCCEEDED
+    assert task.error is None
+    assert stalled.broker.r.zcard("dtq:delayed") == 0  # no retry scheduled
+
+    stalled._finish(stale, TaskStatus.SUCCEEDED, result="from attempt 1")
+    assert get_task(task_id).result is None
+
+
+def test_stalled_worker_cannot_fail_a_task_another_worker_is_running(submit, make_worker, monkeypatch):
+    task_id = submit("noop")
+    stalled, survivor = make_worker("stalled"), make_worker("survivor")
+    stalled.broker.read(stalled.id, config.QUEUES)
+    stale = stalled._claim(task_id, reclaimed=False)
+    survivor._claim(task_id, reclaimed=True)  # survivor's attempt 2 is now running
+
+    stalled._on_failure(stale, "late failure from attempt 1")
+    task = get_task(task_id)
+    assert (task.status, task.attempts, task.worker_id) == (TaskStatus.RUNNING, 2, "survivor")
+    assert stalled.broker.r.zcard("dtq:delayed") == 0

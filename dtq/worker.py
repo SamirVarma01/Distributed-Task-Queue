@@ -182,19 +182,31 @@ class Worker:
         delay = min(config.RETRY_BACKOFF_BASE_SECONDS * 2 ** (task.attempts - 1),
                     config.RETRY_BACKOFF_MAX_SECONDS)
         delay *= random.uniform(0.8, 1.2)  # jitter so retries don't stampede
-        with SessionLocal() as s:
-            s.execute(update(Task).where(Task.id == task.id)
-                      .values(status=TaskStatus.RETRYING, error=error))
-            s.commit()
+        if not self._record(task, status=TaskStatus.RETRYING, error=error):
+            return
         self.broker.schedule(task.queue, task.id, time.time() + delay)
         log.warning("task %s failed; retrying in %.1fs", task.id, delay)
 
     def _finish(self, task: Task, status: TaskStatus, result=None, error: str | None = None):
+        if self._record(task, status=status, result=result, error=error, finished_at=utcnow()):
+            log.info("task %s %s", task.id, status.value)
+
+    def _record(self, task: Task, **values) -> bool:
+        """Save this attempt's outcome, fenced on the attempt we claimed. If this worker
+        stalled past the visibility timeout, another worker may have reclaimed the task:
+        its claim bumped attempts, so this stale write matches no row instead of
+        overwriting that worker's progress or result."""
         with SessionLocal() as s:
-            s.execute(update(Task).where(Task.id == task.id)
-                      .values(status=status, result=result, error=error, finished_at=utcnow()))
+            res = s.execute(
+                update(Task)
+                .where(Task.id == task.id, Task.status == TaskStatus.RUNNING, Task.attempts == task.attempts)
+                .values(**values)
+            )
             s.commit()
-        log.info("task %s %s", task.id, status.value)
+        if not res.rowcount:
+            log.warning("task %s attempt %d was taken over by another worker; dropping its outcome",
+                        task.id, task.attempts)
+        return bool(res.rowcount)
 
 
 if __name__ == "__main__":
