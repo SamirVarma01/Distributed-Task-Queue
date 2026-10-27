@@ -104,6 +104,21 @@ On a laptop, benchmark on mains power with the lid open. Both scripts refuse to 
 
 The matrix and A/B scripts run `docker compose down -v` before each run, which **deletes the stack's data**. Both scripts need the dev requirements (`pip install -r requirements-dev.txt`).
 
+## Chaos test
+
+```sh
+python scripts/chaos.py --tasks 10000 --workers 5 --kill-interval 5
+```
+
+`chaos.py` resets the stack and submits `record_execution` tasks. Each one appends an entry to its own Redis list every time it runs, then works for `--task-ms`. While the tasks run, the script SIGKILLs a random worker container every `--kill-interval` seconds (`docker kill`), records the messages that worker was holding, and starts it again. When the queue drains it reports:
+
+- **kills:** how many workers it killed.
+- **lost tasks:** tasks that never reached a terminal state. This should be 0.
+- **duplicate executions:** tasks whose function ran more than once. Some are expected with at-least-once delivery.
+- **recovery time:** from a kill until each held message's task ran again.
+
+Results go to `bench/results/chaos-<label>.json`. The script exits non-zero if any task was lost.
+
 ## Possible next steps
 
 - Per-task timeouts (run tasks in a subprocess and kill it when time runs out).
