@@ -1,0 +1,2 @@
+start_time,query_time,lock_time,rows_examined,sql_text
+2026-10-26 16:45:38.394397,0:00:00.130791,0:00:00.000009,28,"SELECT DIGEST_TEXT, COUNT_STAR, SUM_TIMER_WAIT / 1e9 AS total_ms, AVG_TIMER_WAIT / 1e9 AS avg_ms, MAX_TIMER_WAIT / 1e9 AS max_ms, SUM_LOCK_TIME / 1e9 AS lock_ms, SUM_ROWS_AFFECTED FROM performance_sch"

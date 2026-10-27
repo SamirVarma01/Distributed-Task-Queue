@@ -1,0 +1,16 @@
+digest_text,count,per_task,total_ms,avg_ms,max_ms,lock_ms,rows_affected
+COMMIT,59946,2.0,831997.6,13.879,18446744069.2,0.2,0
+SELECT COUNT ( * ) FROM `tasks` WHERE STATUS IN (...) AND `id` IN (...),2940,0.1,38901.2,13.232,388.2,13.8,0
+"UPDATE `tasks` SET STATUS = ? , `attempts` = ( `tasks` . `attempts` + ? ) , `worker_id` = ? , `started_at` = ? WHERE `tasks` . `id` = ? AND `tasks` . `status` IN (...)",29984,1.0,16926.8,0.565,253.6,42.9,29996
+"UPDATE `tasks` SET STATUS = ? , `result` = ? , ERROR = ? , `finished_at` = ? WHERE `tasks` . `id` = ?",29978,1.0,13766.5,0.459,258.7,72.0,29991
+"INSERT INTO `tasks` ( `id` , NAME , `queue` , `payload` , STATUS , `attempts` , `max_retries` , ERROR , `worker_id` , `created_at` , `run_at` , `enqueued_at` , `started_at` , `finished_at` ) VALUES (...)",29995,1.0,12830.9,0.428,300.0,103.9,29998
+"SELECT `tasks` . `id` AS `tasks_id` , `tasks` . `name` AS `tasks_name` , `tasks` . `queue` AS `tasks_queue` , `tasks` . `payload` AS `tasks_payload` , `tasks` . `status` AS `tasks_status` , `tasks` . `attempts` AS `tasks_attempts` , `tasks` . `max_retries` AS `tasks_max_retries` , `tasks` . `result` AS `tasks_result` , `tasks` . `error` AS `tasks_error` , `tasks` . `worker_id` AS `tasks_worker_id` , `tasks` . `created_at` AS `tasks_created_at` , `tasks` . `run_at` AS `tasks_run_at` , `tasks` . `enqueued_at` AS `tasks_enqueued_at` , `tasks` . `started_at` AS `tasks_started_at` , `tasks` . `finished_at` AS `tasks_finished_at` FROM `tasks` WHERE `tasks` . `id` = ?",29991,1.0,6439.0,0.215,58.5,21.7,0
+UPDATE `tasks` SET `enqueued_at` = ? WHERE `tasks` . `id` IN (...),60,0.0,2237.3,37.288,476.5,0.2,30000
+"SELECT `tasks` . `id` , `tasks` . `name` , `tasks` . `queue` , `tasks` . `payload` , `tasks` . `status` , `tasks` . `attempts` , `tasks` . `max_retries` , `tasks` . `result` , `tasks` . `error` , `tasks` . `worker_id` , `tasks` . `created_at` , `tasks` . `run_at` , `tasks` . `enqueued_at` , `tasks` . `started_at` , `tasks` . `finished_at` FROM `tasks` WHERE `tasks` . `status` = ? AND `tasks` . `enqueued_at` IS NULL AND `tasks` . `created_at` < ? LIMIT ?",20,0.0,137.6,6.881,44.4,0.0,0
+SHOW ENGINE `INNODB` STATUS,11,0.0,113.2,10.293,59.4,0.0,0
+SELECT ?,12,0.0,73.8,6.152,45.9,0.0,0
+SHOW GLOBAL STATUS,2,0.0,54.3,27.137,44.0,0.0,0
+TRUNCATE `performance_schema` . `events_statements_summary_by_digest`,1,0.0,36.0,36.027,36.0,0.0,0
+ROLLBACK,142,0.0,32.3,0.228,7.7,0.0,0
+SET NAMES `utf8mb4`,30,0.0,20.4,0.678,15.9,0.0,0
+SET `AUTOCOMMIT` = ?,15,0.0,16.5,1.097,6.8,0.0,0

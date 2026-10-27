@@ -1,0 +1,4 @@
+start_time,query_time,lock_time,rows_examined,sql_text
+2026-10-26 16:47:57.388128,0:00:00.102247,0:00:00.000002,1000,"SELECT COUNT(*) FROM tasks WHERE status IN ('succeeded', 'dead', 'cancelled') AND id IN ('a3c41751-15df-43c0-99b2-9d62700576f7', '379f6097-3b8c-42f0-a266-5f9b1a9cb983', '2a8a19f9-ae42-4df1-b2aa-b8f199"
+2026-10-26 16:48:11.304181,0:00:00.108014,0:00:00.000008,1000,"SELECT COUNT(*) FROM tasks WHERE status IN ('succeeded', 'dead', 'cancelled') AND id IN ('b947ab16-0707-412d-b24a-85c3cbdbf670', '82a9e078-5ab3-44be-a350-6a3c925134f2', '7b6177bb-a19b-49eb-b969-7f911c"
+2026-10-26 16:48:13.838354,0:00:00.232208,0:00:00.000010,1000,"SELECT COUNT(*) FROM tasks WHERE status IN ('succeeded', 'dead', 'cancelled') AND id IN ('cf0bbe10-288b-427c-8887-799294997054', 'ab85bc5f-92d4-4a18-a9ba-821f9b926952', '323b1b43-c4ff-4689-aed3-748c9d"

@@ -1,0 +1,15 @@
+digest_text,count,per_task,total_ms,avg_ms,max_ms,lock_ms,rows_affected
+COMMIT,60105,2.0,24086.1,0.401,48.1,0.0,0
+"UPDATE `tasks` SET STATUS = ? , `attempts` = ( `tasks` . `attempts` + ? ) , `worker_id` = ? , `started_at` = ? WHERE `tasks` . `id` = ? AND `tasks` . `status` IN (...)",29996,1.0,9624.8,0.321,97.7,30.5,29995
+ROLLBACK,120104,4.0,9031.9,0.075,19.9,0.0,0
+SELECT COUNT ( * ) FROM `tasks` WHERE STATUS IN (...) AND `id` IN (...),690,0.02,8360.3,12.116,53.3,0.7,0
+"INSERT INTO `tasks` ( `id` , NAME , `queue` , `payload` , STATUS , `attempts` , `max_retries` , ERROR , `worker_id` , `created_at` , `run_at` , `enqueued_at` , `started_at` , `finished_at` ) VALUES (...)",29990,1.0,8064.0,0.269,34.7,18.7,29994
+"UPDATE `tasks` SET STATUS = ? , `result` = ? , ERROR = ? , `finished_at` = ? WHERE `tasks` . `id` = ?",29989,1.0,7489.1,0.25,96.7,29.4,29996
+"SELECT `tasks` . `id` AS `tasks_id` , `tasks` . `name` AS `tasks_name` , `tasks` . `queue` AS `tasks_queue` , `tasks` . `payload` AS `tasks_payload` , `tasks` . `status` AS `tasks_status` , `tasks` . `attempts` AS `tasks_attempts` , `tasks` . `max_retries` AS `tasks_max_retries` , `tasks` . `result` AS `tasks_result` , `tasks` . `error` AS `tasks_error` , `tasks` . `worker_id` AS `tasks_worker_id` , `tasks` . `created_at` AS `tasks_created_at` , `tasks` . `run_at` AS `tasks_run_at` , `tasks` . `enqueued_at` AS `tasks_enqueued_at` , `tasks` . `started_at` AS `tasks_started_at` , `tasks` . `finished_at` AS `tasks_finished_at` FROM `tasks` WHERE `tasks` . `id` = ?",29989,1.0,6607.2,0.22,96.3,23.8,0
+UPDATE `tasks` SET `enqueued_at` = ? WHERE `tasks` . `id` IN (...),60,0.0,947.4,15.79,37.7,0.1,30000
+TRUNCATE `performance_schema` . `events_statements_summary_by_digest`,1,0.0,22.5,22.528,22.5,0.0,0
+SHOW ENGINE `INNODB` STATUS,3,0.0,7.7,2.577,6.3,0.0,0
+SELECT ?,3,0.0,4.7,1.578,4.7,0.0,0
+SHOW GLOBAL STATUS,2,0.0,2.9,1.466,1.7,0.0,0
+SET NAMES `utf8mb4`,16,0.0,2.4,0.149,0.9,0.0,0
+SET `AUTOCOMMIT` = ?,8,0.0,0.5,0.068,0.4,0.0,0

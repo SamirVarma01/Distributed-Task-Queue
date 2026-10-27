@@ -17,8 +17,9 @@ RECLAIM_INTERVAL_SECONDS = float(os.getenv("RECLAIM_INTERVAL_SECONDS", "15"))
 # old such a task must be before it is re-sent (so tasks still being submitted are left alone).
 RECONCILE_INTERVAL_SECONDS = float(os.getenv("RECONCILE_INTERVAL_SECONDS", "60"))
 RECONCILE_AFTER_SECONDS = float(os.getenv("RECONCILE_AFTER_SECONDS", "60"))
-# How long an idle worker waits before polling the queues again.
-POLL_INTERVAL_SECONDS = float(os.getenv("POLL_INTERVAL_SECONDS", "0.5"))
+# How long an idle worker's blocking read waits for a new message before it loops
+# round to promote due retries and reclaim stale messages.
+READ_BLOCK_MS = int(os.getenv("READ_BLOCK_MS", "100"))
 # How long a worker backs off after an infrastructure error (MySQL or Redis down).
 ERROR_BACKOFF_SECONDS = float(os.getenv("ERROR_BACKOFF_SECONDS", "2"))
 

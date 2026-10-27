@@ -1,0 +1,60 @@
+{
+  "label": "matrix-20261026-120822-w10-r430-rep5",
+  "date": "2026-10-26T16:15:08+00:00",
+  "mode": "rate",
+  "task": "noop",
+  "payload": {},
+  "tasks": 25800,
+  "workers": 10,
+  "settings": {
+    "warmup": 200,
+    "batch_size": 500,
+    "concurrency": 8
+  },
+  "environment": {
+    "commit": "b96dfeb",
+    "uncommitted_changes": false,
+    "host": "macOS-26.2-arm64-arm-64bit-Mach-O",
+    "cpu": "Apple M2",
+    "docker_cpus": 8,
+    "docker_mem_gib": 3.8,
+    "docker_version": "29.1.3"
+  },
+  "metrics": {
+    "statuses": {
+      "succeeded": 25800
+    },
+    "wall_seconds": 60.311,
+    "throughput_per_second": 427.8,
+    "submit_seconds": 59.962,
+    "latency_ms": {
+      "p50": 224.2,
+      "p95": 506.1,
+      "p99": 643.2,
+      "max": 701.3
+    },
+    "queue_wait_ms": {
+      "p50": 217.3,
+      "p95": 497.1,
+      "p99": 631.2,
+      "max": 686.5
+    },
+    "run_ms": {
+      "p50": 6.1,
+      "p95": 12.8,
+      "p99": 21.9,
+      "max": 136.6
+    }
+  },
+  "rate": {
+    "target": 430.0,
+    "duration_seconds": 60.0,
+    "tick_ms": 20,
+    "submit_lag_ms": {
+      "p50": 2.4,
+      "p95": 4.9,
+      "p99": 8.0,
+      "max": 20.8
+    }
+  }
+}

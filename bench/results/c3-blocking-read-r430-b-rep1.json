@@ -1,0 +1,60 @@
+{
+  "label": "c3-blocking-read-r430-b-rep1",
+  "date": "2026-10-27T04:44:49+00:00",
+  "mode": "rate",
+  "task": "noop",
+  "payload": {},
+  "tasks": 25800,
+  "workers": 10,
+  "settings": {
+    "warmup": 200,
+    "batch_size": 500,
+    "concurrency": 8
+  },
+  "environment": {
+    "commit": "83b4cbf",
+    "uncommitted_changes": false,
+    "host": "macOS-26.2-arm64-arm-64bit-Mach-O",
+    "cpu": "Apple M2",
+    "docker_cpus": 8,
+    "docker_mem_gib": 3.8,
+    "docker_version": "29.1.3"
+  },
+  "metrics": {
+    "statuses": {
+      "succeeded": 25800
+    },
+    "wall_seconds": 59.956,
+    "throughput_per_second": 430.3,
+    "submit_seconds": 59.949,
+    "latency_ms": {
+      "p50": 5.9,
+      "p95": 12.2,
+      "p99": 26.5,
+      "max": 90.3
+    },
+    "queue_wait_ms": {
+      "p50": 2.0,
+      "p95": 5.2,
+      "p99": 15.9,
+      "max": 71.2
+    },
+    "run_ms": {
+      "p50": 3.8,
+      "p95": 6.9,
+      "p99": 12.5,
+      "max": 86.0
+    }
+  },
+  "rate": {
+    "target": 430.0,
+    "duration_seconds": 60.0,
+    "tick_ms": 20,
+    "submit_lag_ms": {
+      "p50": 3.6,
+      "p95": 4.9,
+      "p99": 5.1,
+      "max": 31.6
+    }
+  }
+}

@@ -5,3 +5,4 @@ __pycache__
 scripts
 tests
 .pytest_cache
+bench

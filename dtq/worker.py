@@ -29,7 +29,9 @@ class Heartbeat(threading.Thread):
     def run(self):
         while not self._stop_event.wait(config.HEARTBEAT_SECONDS):
             try:
-                self.broker.touch(self.consumer, self.stream, self.msg_id)
+                if not self.broker.touch(self.consumer, self.stream, self.msg_id):
+                    log.warning("message %s was reclaimed by another worker; heartbeat stopped", self.msg_id)
+                    return
             except Exception:
                 log.exception("heartbeat failed for %s", self.msg_id)
 
@@ -57,8 +59,7 @@ class Worker:
 
         while not self.stopping:
             try:
-                if not self.step():
-                    time.sleep(config.POLL_INTERVAL_SECONDS)
+                self.step(block_ms=config.READ_BLOCK_MS)
             except Exception:
                 # MySQL or Redis is unavailable. Any message we held stays unacked and
                 # is reclaimed once the outage is over, so back off and keep going.
@@ -66,15 +67,16 @@ class Worker:
                 time.sleep(config.ERROR_BACKOFF_SECONDS)
         log.info("worker %s stopped", self.id)
 
-    def step(self) -> bool:
+    def step(self, block_ms: int = 0) -> bool:
         """One loop iteration: promote due retries, re-send lost tasks, reclaim stale
-        messages, and run the next task. Returns False if there was no new task to run."""
+        messages, and run the next task, waiting up to block_ms for one if the queues
+        are empty. Returns False if there was no new task to run."""
         self.broker.promote_due()
         if time.monotonic() - self._last_reconcile > config.RECONCILE_INTERVAL_SECONDS:
             self._reconcile()
         if time.monotonic() - self._last_reclaim > config.RECLAIM_INTERVAL_SECONDS:
             self._reclaim_stale()
-        msg = self.broker.read(self.id, self.queues)
+        msg = self.broker.read(self.id, self.queues, block_ms)
         if msg is None:
             return False
         self.handle(*msg)
@@ -116,7 +118,7 @@ class Worker:
     def handle(self, stream: str, msg_id: str, fields: dict, reclaimed: bool = False):
         task = self._claim(fields.get("task_id"), reclaimed)
         if task is None:  # already running, finished, cancelled, or unknown: drop the message
-            self.broker.ack(stream, msg_id)
+            self.broker.ack(self.id, stream, msg_id)
             return
 
         heartbeat = Heartbeat(self.broker, self.id, stream, msg_id)
@@ -127,7 +129,7 @@ class Worker:
             heartbeat.stop()
         # Ack only once the outcome is recorded. If recording it raised (MySQL or Redis
         # down), the message stays pending and is reclaimed after the visibility timeout.
-        self.broker.ack(stream, msg_id)
+        self.broker.ack(self.id, stream, msg_id)
 
     def _claim(self, task_id: str | None, reclaimed: bool) -> Task | None:
         """Mark the task running. The conditional update makes duplicate deliveries
@@ -138,14 +140,15 @@ class Worker:
         claimable = [TaskStatus.QUEUED, TaskStatus.RETRYING]
         if reclaimed:
             claimable.append(TaskStatus.RUNNING)
-        with SessionLocal() as s:
+        # Read the claimed row in the claim's own transaction: reading it after the
+        # commit would open a second transaction that then has to be rolled back.
+        with SessionLocal() as s, s.begin():
             res = s.execute(
                 update(Task)
                 .where(Task.id == task_id, Task.status.in_(claimable))
                 .values(status=TaskStatus.RUNNING, attempts=Task.attempts + 1,
                         worker_id=self.id, started_at=utcnow())
             )
-            s.commit()
             return s.get(Task, task_id) if res.rowcount else None
 
     def _execute(self, task: Task):
@@ -167,9 +170,11 @@ class Worker:
         except Exception:
             self._on_failure(task, traceback.format_exc())
         else:
+            # MySQL's JSON type rejects NaN and Infinity, which json.dumps accepts by
+            # default; such a result could never be saved, so store its repr instead.
             try:
-                json.dumps(result)
-            except TypeError:
+                json.dumps(result, allow_nan=False)
+            except (TypeError, ValueError):
                 result = repr(result)
             self._finish(task, TaskStatus.SUCCEEDED, result=result)
 
@@ -181,19 +186,31 @@ class Worker:
         delay = min(config.RETRY_BACKOFF_BASE_SECONDS * 2 ** (task.attempts - 1),
                     config.RETRY_BACKOFF_MAX_SECONDS)
         delay *= random.uniform(0.8, 1.2)  # jitter so retries don't stampede
-        with SessionLocal() as s:
-            s.execute(update(Task).where(Task.id == task.id)
-                      .values(status=TaskStatus.RETRYING, error=error))
-            s.commit()
+        if not self._record(task, status=TaskStatus.RETRYING, error=error):
+            return
         self.broker.schedule(task.queue, task.id, time.time() + delay)
         log.warning("task %s failed; retrying in %.1fs", task.id, delay)
 
     def _finish(self, task: Task, status: TaskStatus, result=None, error: str | None = None):
+        if self._record(task, status=status, result=result, error=error, finished_at=utcnow()):
+            log.info("task %s %s", task.id, status.value)
+
+    def _record(self, task: Task, **values) -> bool:
+        """Save this attempt's outcome, fenced on the attempt we claimed. If this worker
+        stalled past the visibility timeout, another worker may have reclaimed the task:
+        its claim bumped attempts, so this stale write matches no row instead of
+        overwriting that worker's progress or result."""
         with SessionLocal() as s:
-            s.execute(update(Task).where(Task.id == task.id)
-                      .values(status=status, result=result, error=error, finished_at=utcnow()))
+            res = s.execute(
+                update(Task)
+                .where(Task.id == task.id, Task.status == TaskStatus.RUNNING, Task.attempts == task.attempts)
+                .values(**values)
+            )
             s.commit()
-        log.info("task %s %s", task.id, status.value)
+        if not res.rowcount:
+            log.warning("task %s attempt %d was taken over by another worker; dropping its outcome",
+                        task.id, task.attempts)
+        return bool(res.rowcount)
 
 
 if __name__ == "__main__":

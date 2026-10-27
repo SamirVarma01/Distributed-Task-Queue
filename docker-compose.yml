@@ -14,6 +14,14 @@ x-app: &app
 services:
   mysql:
     build: ./sql
+    # No binary log: it exists for replication and point-in-time recovery, which this
+    # stack doesn't use, and keeping it in step with InnoDB costs every commit a second
+    # fsync. Commits stay durable through InnoDB's redo log. See "Durability settings" in the README.
+    # MYSQL_FLUSH_LOG_AT_TRX_COMMIT=2 is an opt-in speedup that is NOT crash-safe (README).
+    command:
+      - mysqld
+      - --disable-log-bin
+      - --innodb-flush-log-at-trx-commit=${MYSQL_FLUSH_LOG_AT_TRX_COMMIT:-1}
     environment:
       MYSQL_DATABASE: dtq
       MYSQL_USER: dtq
@@ -29,7 +37,15 @@ services:
 
   redis:
     image: redis:7.4-alpine
-    command: ["redis-server", "--appendonly", "yes"]
+    # appendfsync always: a write is on disk before Redis replies, so a message the API
+    # reported as enqueued, or an ack, survives an OS or VM crash. See "Durability
+    # settings" in the README; REDIS_APPENDFSYNC=everysec is an opt-in that is not crash-safe.
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --appendfsync
+      - ${REDIS_APPENDFSYNC:-always}
     ports: ["6379:6379"]
     volumes:
       - redis-data:/data
