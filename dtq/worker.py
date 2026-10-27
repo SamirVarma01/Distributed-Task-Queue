@@ -170,9 +170,11 @@ class Worker:
         except Exception:
             self._on_failure(task, traceback.format_exc())
         else:
+            # MySQL's JSON type rejects NaN and Infinity, which json.dumps accepts by
+            # default; such a result could never be saved, so store its repr instead.
             try:
-                json.dumps(result)
-            except TypeError:
+                json.dumps(result, allow_nan=False)
+            except (TypeError, ValueError):
                 result = repr(result)
             self._finish(task, TaskStatus.SUCCEEDED, result=result)
 

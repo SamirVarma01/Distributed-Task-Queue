@@ -5,6 +5,7 @@ from sqlalchemy import update
 
 from dtq import config
 from dtq.db import SessionLocal, Task, TaskStatus, utcnow
+from dtq.registry import task as register_task
 
 from .conftest import get_task, pending_count
 
@@ -346,3 +347,19 @@ def test_stalled_worker_does_not_delete_the_message_another_worker_is_running(su
     survivor.handle(*survivor_msg, reclaimed=True)  # e.g. after the survivor crashed
     assert get_task(task_id).status == TaskStatus.SUCCEEDED
     assert pending_count(survivor.broker, "default") == 0
+
+
+@register_task("returns_nan")
+def returns_nan() -> dict:
+    return {"score": float("nan")}
+
+
+def test_result_mysql_json_cannot_hold_is_stored_as_repr(submit, make_worker):
+    """MySQL's JSON type rejects NaN/Infinity (error 3140), so saving such a result
+    failed on every attempt until the task went dead with a misleading error."""
+    task_id = submit("returns_nan")
+    make_worker().step()
+
+    task = get_task(task_id)
+    assert task.status == TaskStatus.SUCCEEDED
+    assert task.result == "{'score': nan}"
