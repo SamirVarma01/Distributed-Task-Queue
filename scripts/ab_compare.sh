@@ -39,18 +39,25 @@ for i in $(seq "$pairs"); do
     dir=$tmp/$side
     side_env=$([ "$side" = a ] && echo "${A_ENV:-}" || echo "${B_ENV:-}")
     echo "=== $name-$side-$i ($(git -C "$dir" rev-parse --short HEAD)${side_env:+ $side_env})"
-    (
+    # Keep each run's full output; print only its summary line unless the run fails.
+    log=$tmp/$name-$side-$i.log
+    if ! (
       cd "$dir"
-      docker compose down -v --remove-orphans --timeout 5 >/dev/null 2>&1
-      env $side_env docker compose up -d --build --wait --scale worker="$WORKERS" >/dev/null 2>&1
+      docker compose down -v --remove-orphans --timeout 5
+      env $side_env docker compose up -d --build --wait --scale worker="$WORKERS"
       if [ "$kind" = profile ]; then
-        "$PYTHON" scripts/profile_bench.py --no-reset --workers "$WORKERS" --label "$name-$side-$i" "$@" \
-          | tr '\r' '\n' | grep -E '"throughput_per_second"|^wrote'
+        "$PYTHON" scripts/profile_bench.py --no-reset --workers "$WORKERS" --label "$name-$side-$i" "$@"
       else
-        "$PYTHON" scripts/bench.py --workers "$WORKERS" --label "$name-$side-rep$i" "$@" \
-          | tr '\r' '\n' | grep -E 'tasks/s over'
+        "$PYTHON" scripts/bench.py --workers "$WORKERS" --label "$name-$side-rep$i" "$@"
       fi
-    )
+    ) >"$log" 2>&1; then
+      echo "run failed; last lines of its output:"
+      tr '\r' '\n' <"$log" | tail -n 30
+      echo "container logs:"
+      (cd "$dir" && docker compose logs --tail 20 2>&1) || true
+      exit 1
+    fi
+    tr '\r' '\n' <"$log" | grep -E '"throughput_per_second"|^wrote|tasks/s over' || true
     if [ "$kind" = profile ]; then
       cp -R "$dir/bench/profiles/$name-$side-$i" bench/profiles/
       echo "$side_env" > "bench/profiles/$name-$side-$i/compose_env.txt"
