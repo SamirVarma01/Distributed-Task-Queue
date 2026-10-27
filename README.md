@@ -69,11 +69,13 @@ The payload's fields are passed to it as keyword arguments. The return value mus
 
 **Delivery is at-least-once.** A worker can crash after a task's side effects happen but before it records the result. When that happens the task runs again, so tasks should be idempotent.
 
-## MySQL settings
+## Durability settings
 
 MySQL runs with `--disable-log-bin`. The binary log is used for replication and point-in-time recovery. This stack does neither: there is one MySQL server, and the data is reset freely. Waiting for disk flushes on commit was the main limit on worker throughput (see `bench/profiles/FINDINGS.md`), and keeping the binary log consistent with InnoDB adds a second flush, of the binary log, to each commit. Turning it off doesn't weaken durability: with `innodb_flush_log_at_trx_commit=1` (the default, unchanged), InnoDB's redo log is flushed to disk before each commit returns, so a committed claim or result survives a crash. If you add a replica or need point-in-time recovery, remove the flag.
 
 **Opt-in, not crash-safe:** `MYSQL_FLUSH_LOG_AT_TRX_COMMIT=2 docker compose up` sets `innodb_flush_log_at_trx_commit=2`. MySQL then writes the redo log on each commit but flushes it to disk only about once a second. That removes the per-commit wait, but if the OS or Docker VM crashes (not just MySQL), up to about a second of commits that clients were told succeeded can be lost. For this queue that breaks at-least-once delivery. A worker can save a task's result, ack and delete its Redis message, and then lose the saved result in the crash. The row goes back to `running` or `queued` with no message left to deliver it, so the task never runs again. Use it only for throwaway benchmarks or where losing tasks is acceptable. The default is `1`.
+
+Redis runs with `--appendfsync always`, so each write is flushed to its append-only file before Redis replies. Redis's default, `everysec`, flushes about once a second. If the OS or Docker VM crashed (killing the Redis process alone is not enough), the last second of writes could be lost, including a task's `XADD` after the API had already returned 202 and set `enqueued_at`. Nothing would re-send that task: the reconciler only re-sends rows without `enqueued_at`, and a task stuck in `retrying` or `running` would lose its message the same way. `REDIS_APPENDFSYNC=everysec docker compose up` is an opt-in with the same tradeoff as the MySQL one above: faster, and not crash-safe.
 
 ## Tests
 
