@@ -1,0 +1,60 @@
+{
+  "label": "final-r687-a-rep5",
+  "date": "2026-10-27T05:50:02+00:00",
+  "mode": "rate",
+  "task": "noop",
+  "payload": {},
+  "tasks": 41220,
+  "workers": 10,
+  "settings": {
+    "warmup": 200,
+    "batch_size": 500,
+    "concurrency": 8
+  },
+  "environment": {
+    "commit": "e9a088b",
+    "uncommitted_changes": false,
+    "host": "macOS-26.2-arm64-arm-64bit-Mach-O",
+    "cpu": "Apple M2",
+    "docker_cpus": 8,
+    "docker_mem_gib": 3.8,
+    "docker_version": "29.1.3"
+  },
+  "metrics": {
+    "statuses": {
+      "succeeded": 41220
+    },
+    "wall_seconds": 60.042,
+    "throughput_per_second": 686.5,
+    "submit_seconds": 59.974,
+    "latency_ms": {
+      "p50": 346.8,
+      "p95": 1935.7,
+      "p99": 2351.0,
+      "max": 2452.2
+    },
+    "queue_wait_ms": {
+      "p50": 339.9,
+      "p95": 1928.0,
+      "p99": 2342.3,
+      "max": 2439.1
+    },
+    "run_ms": {
+      "p50": 5.8,
+      "p95": 12.8,
+      "p99": 20.9,
+      "max": 83.5
+    }
+  },
+  "rate": {
+    "target": 687.0,
+    "duration_seconds": 60.0,
+    "tick_ms": 20,
+    "submit_lag_ms": {
+      "p50": 2.6,
+      "p95": 8.2,
+      "p99": 9.5,
+      "max": 21.6
+    }
+  }
+}

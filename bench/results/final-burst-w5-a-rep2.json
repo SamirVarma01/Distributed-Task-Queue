@@ -1,0 +1,49 @@
+{
+  "label": "final-burst-w5-a-rep2",
+  "date": "2026-10-27T05:24:11+00:00",
+  "mode": "burst",
+  "task": "noop",
+  "payload": {},
+  "tasks": 10000,
+  "workers": 5,
+  "settings": {
+    "warmup": 200,
+    "batch_size": 500,
+    "concurrency": 8
+  },
+  "environment": {
+    "commit": "e9a088b",
+    "uncommitted_changes": false,
+    "host": "macOS-26.2-arm64-arm-64bit-Mach-O",
+    "cpu": "Apple M2",
+    "docker_cpus": 8,
+    "docker_mem_gib": 3.8,
+    "docker_version": "29.1.3"
+  },
+  "metrics": {
+    "statuses": {
+      "succeeded": 10000
+    },
+    "wall_seconds": 13.45,
+    "throughput_per_second": 743.5,
+    "submit_seconds": 1.472,
+    "latency_ms": {
+      "p50": 6479.2,
+      "p95": 11231.5,
+      "p99": 11917.5,
+      "max": 11986.5
+    },
+    "queue_wait_ms": {
+      "p50": 6476.2,
+      "p95": 11226.9,
+      "p99": 11914.4,
+      "max": 11983.9
+    },
+    "run_ms": {
+      "p50": 3.1,
+      "p95": 4.8,
+      "p99": 8.1,
+      "max": 32.9
+    }
+  }
+}
