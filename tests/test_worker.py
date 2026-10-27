@@ -363,3 +363,21 @@ def test_result_mysql_json_cannot_hold_is_stored_as_repr(submit, make_worker):
     task = get_task(task_id)
     assert task.status == TaskStatus.SUCCEEDED
     assert task.result == "{'score': nan}"
+
+
+def test_record_execution_records_every_run(submit, make_worker, monkeypatch):
+    """scripts/chaos.py counts duplicate executions from these records."""
+    task_id = submit("record_execution", {"key": "k1"})
+    w = make_worker()
+    w.step()
+    # Run it again, as a redelivery after a crash would.
+    with SessionLocal() as s:
+        s.execute(update(Task).where(Task.id == task_id).values(status=TaskStatus.QUEUED))
+        s.commit()
+    w.broker.enqueue("default", task_id)
+    w.step()
+
+    entries = w.broker.r.lrange("dtq:chaos:k1", 0, -1)
+    assert len(entries) == 2
+    when, host = entries[0].split()
+    assert float(when) > 0 and host
