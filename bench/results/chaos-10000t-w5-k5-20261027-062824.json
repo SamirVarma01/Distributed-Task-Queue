@@ -1,0 +1,219 @@
+{
+  "label": "chaos-10000t-w5-k5-20261027-062824",
+  "date": "2026-10-27T06:28:24+00:00",
+  "settings": {
+    "tasks": 10000,
+    "workers": 5,
+    "kill_interval_seconds": 5,
+    "task_ms": 50,
+    "drain_timeout_seconds": 600,
+    "seed": 623749905
+  },
+  "environment": {
+    "commit": "8d4b157",
+    "uncommitted_changes": false,
+    "host": "macOS-26.2-arm64-arm-64bit-Mach-O",
+    "cpu": "Apple M2",
+    "docker_cpus": 8,
+    "docker_mem_gib": 3.8,
+    "docker_version": "29.1.3",
+    "power": "AC Power"
+  },
+  "duration_seconds": 161.3,
+  "tasks": {
+    "submitted": 10000,
+    "succeeded": 10000,
+    "dead": 0,
+    "cancelled": 0,
+    "lost": 0,
+    "lost_ids": [],
+    "ran_more_than_one_attempt": 20
+  },
+  "executions": {
+    "total": 10020,
+    "tasks_run_more_than_once": 20,
+    "extra_executions": 20,
+    "max_per_task": 2,
+    "succeeded_without_execution": 0
+  },
+  "kills": 26,
+  "recovery_seconds": {
+    "count": 20,
+    "p50": 31.49,
+    "p95": 31.82,
+    "max": 31.82,
+    "in_flight_already_finished": 0
+  },
+  "kill_log": [
+    {
+      "time": 1793082532.76584,
+      "container": "347d1588ac57",
+      "in_flight": [
+        "5cad8307-d885-4d25-8e33-28f7fe9213db"
+      ]
+    },
+    {
+      "time": 1793082538.840357,
+      "container": "0290e0a8ed9d",
+      "in_flight": [
+        "45f01361-4db4-4dca-9a6d-0d9993bb4ffb"
+      ]
+    },
+    {
+      "time": 1793082544.890794,
+      "container": "24d44641c999",
+      "in_flight": [
+        "b2062a75-d8a3-4a64-90bb-c8b0a2c654f5"
+      ]
+    },
+    {
+      "time": 1793082550.876403,
+      "container": "0290e0a8ed9d",
+      "in_flight": [
+        "df1dbb1d-c339-4d23-95ba-d83fcbed4252"
+      ]
+    },
+    {
+      "time": 1793082556.880611,
+      "container": "347d1588ac57",
+      "in_flight": [
+        "cfc6ee89-d4f6-464f-92a5-5dea3a5a3109"
+      ]
+    },
+    {
+      "time": 1793082562.912907,
+      "container": "3da843b10f60",
+      "in_flight": [
+        "aa91bf60-fd6e-4fcf-9907-e7812a9f63f1"
+      ]
+    },
+    {
+      "time": 1793082568.977941,
+      "container": "0290e0a8ed9d",
+      "in_flight": []
+    },
+    {
+      "time": 1793082575.125108,
+      "container": "347d1588ac57",
+      "in_flight": [
+        "a6e61299-b346-4bb5-b5f2-54726d5fe0db"
+      ]
+    },
+    {
+      "time": 1793082581.166515,
+      "container": "3da843b10f60",
+      "in_flight": [
+        "f627a3b8-7528-4cc6-9f27-ba3be5254cea"
+      ]
+    },
+    {
+      "time": 1793082587.21358,
+      "container": "3da843b10f60",
+      "in_flight": [
+        "cb626a90-0537-476f-988e-95f1d327f74d"
+      ]
+    },
+    {
+      "time": 1793082593.227059,
+      "container": "24d44641c999",
+      "in_flight": [
+        "2b546696-d01e-4815-873f-bf9c228889ff"
+      ]
+    },
+    {
+      "time": 1793082599.354694,
+      "container": "24d44641c999",
+      "in_flight": [
+        "45804a1d-0bb4-421c-98ba-adc0fc18d2fc"
+      ]
+    },
+    {
+      "time": 1793082605.434244,
+      "container": "347d1588ac57",
+      "in_flight": [
+        "654b49bf-ef06-4896-a361-3c3459f816b6"
+      ]
+    },
+    {
+      "time": 1793082611.496324,
+      "container": "347d1588ac57",
+      "in_flight": [
+        "c4a3512b-591a-4e0f-983f-ac14ffa8b524"
+      ]
+    },
+    {
+      "time": 1793082617.577445,
+      "container": "3da843b10f60",
+      "in_flight": [
+        "d11486ed-4c5e-4327-951e-b85f63fc4c72"
+      ]
+    },
+    {
+      "time": 1793082623.620986,
+      "container": "24d44641c999",
+      "in_flight": [
+        "1b308311-77ac-434b-91d8-883e43ac014b"
+      ]
+    },
+    {
+      "time": 1793082629.653676,
+      "container": "347d1588ac57",
+      "in_flight": [
+        "13b4d708-557e-4db8-abfe-8bbb8738d828"
+      ]
+    },
+    {
+      "time": 1793082635.864046,
+      "container": "0290e0a8ed9d",
+      "in_flight": [
+        "831b0e34-bcfd-4152-ac3a-d6e986a36cbc"
+      ]
+    },
+    {
+      "time": 1793082642.020842,
+      "container": "3da843b10f60",
+      "in_flight": [
+        "13acc025-a925-4737-a680-e2c1d86f76ac"
+      ]
+    },
+    {
+      "time": 1793082648.133201,
+      "container": "24d44641c999",
+      "in_flight": [
+        "390e15fc-9c56-49f1-be39-96594a31b480"
+      ]
+    },
+    {
+      "time": 1793082654.213196,
+      "container": "3da843b10f60",
+      "in_flight": [
+        "1d4e0380-27d3-4ed0-8e34-d37d463a1e18"
+      ]
+    },
+    {
+      "time": 1793082660.245692,
+      "container": "3da843b10f60",
+      "in_flight": []
+    },
+    {
+      "time": 1793082666.329428,
+      "container": "ab2cac30f6ea",
+      "in_flight": []
+    },
+    {
+      "time": 1793082672.365694,
+      "container": "347d1588ac57",
+      "in_flight": []
+    },
+    {
+      "time": 1793082678.398089,
+      "container": "0290e0a8ed9d",
+      "in_flight": []
+    },
+    {
+      "time": 1793082684.604883,
+      "container": "24d44641c999",
+      "in_flight": []
+    }
+  ]
+}
