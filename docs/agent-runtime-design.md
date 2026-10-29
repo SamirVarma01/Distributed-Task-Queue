@@ -1,6 +1,6 @@
 # Agent runtime design
 
-**Status:** agent runtime Phase 0. This revision applies your answers to the first round of questions ([section 14](#14-decisions)). Nothing is implemented yet. Two new questions came out of running tool calls in parallel ([section 15](#15-open-questions)).
+**Status:** agent runtime Phase 0. This revision applies the decisions from two rounds of review ([section 14](#14-decisions)). Nothing is implemented yet.
 
 ## 1. What it is
 
@@ -237,8 +237,8 @@ A tool that declares no effect is treated as `side_effect`, so forgetting to ann
 
 An approval is a step of kind `approval`. It is how a person's decision enters the run's history. Approval steps are created already `waiting`, and are finished through the API, never by a worker.
 
-- **Tools with `requires_approval`.** If an LLM response requests any of them, C creates one approval step for the turn, listing those calls, and pauses the run. None of the turn's calls run until it is approved, including calls that don't need approval. One decision per turn is enough, because rejecting fails the run anyway (question 15.1).
-- **Unknown outcomes.** Each call whose outcome is unknown gets its own approval step. The turn's other calls keep running and recording while the run waits (question 15.2). The next turn can't start until every call has a result.
+- **Tools with `requires_approval`.** If an LLM response requests any of them, C creates one approval step for the turn, listing those calls, and pauses the run. None of the turn's calls run until it is approved, including calls that don't need approval. One decision per turn is enough, because rejecting fails the run anyway (decision 8).
+- **Unknown outcomes.** Each call whose outcome is unknown gets its own approval step. The turn's other calls keep running and recording while the run waits (decision 9). The next turn can't start until every call has a result.
 - **`POST /runs/{id}/approve`** takes the approval step's `step_no`, so a person approves exactly what they looked at. In one transaction, it marks that step `succeeded` and then:
   - **for a turn's approval,** schedules the turn's tool steps;
   - **for an unknown outcome, with no body,** means "it didn't happen, try again". It creates a new tool step for the same call, with the same key;
@@ -359,8 +359,6 @@ How the unfinished DTQ phases affect this:
 
 ## 14. Decisions
 
-From the first review:
-
 | # | question | decision |
 |---|---|---|
 | 1 | How do tools declare their effects? | One `effect`: `read_only`, `idempotent` or `side_effect` (the default) |
@@ -370,8 +368,6 @@ From the first review:
 | 5 | Can side-effecting tools resolve unknown outcomes? | Yes, through an optional `check(idempotency_key)`, which can only conclude that the call happened |
 | 6 | What happens to the run when a step's DTQ task goes dead? | An `on_dead` hook fails the run, in the same transaction |
 | 7 | Parallel tool calls? | In scope. A turn's tool calls run in parallel (sections 4 and 5). |
+| 8 | One approval per turn, or one per call? | One per turn, covering every call in it that needs approval. A reject fails the whole run, so approving calls one at a time wouldn't let a person do anything more. |
+| 9 | While a run waits on one call's unknown outcome, do the turn's other calls keep running? | Yes. They were scheduled before anything went wrong and don't depend on the unknown call. |
 
-## 15. Open questions
-
-1. **One approval per turn, or one per call?** I'd ask once per turn, covering every call in it that needs approval. Since a reject fails the whole run, approving calls one at a time wouldn't let a person do anything more, and it would mean several pauses per turn.
-2. **While a run waits on one call's unknown outcome, should the turn's other calls keep running?** I'd say yes. They were scheduled before anything went wrong and don't depend on the unknown call, and stopping them would mean parking their messages until the person answers.
