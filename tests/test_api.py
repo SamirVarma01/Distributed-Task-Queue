@@ -1,6 +1,7 @@
 import redis
 
 from dtq import api
+from dtq.registry import task as register_task
 from dtq.db import TaskStatus
 
 from .conftest import get_task
@@ -130,3 +131,16 @@ def test_batch_submitted_tasks_run(client, make_worker):
         pass
 
     assert {get_task(i).status for i in ids} == {TaskStatus.SUCCEEDED}
+
+
+def test_cancel_refuses_tasks_registered_as_not_cancellable(client, submit):
+    @register_task("scheduled_elsewhere", cancellable=False)
+    def scheduled_elsewhere():
+        pass
+
+    task_id = submit("scheduled_elsewhere")
+    resp = client.post(f"/tasks/{task_id}/cancel")
+
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == "scheduled_elsewhere tasks cannot be cancelled"
+    assert get_task(task_id).status == TaskStatus.QUEUED

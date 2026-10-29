@@ -5,6 +5,7 @@ from typing import Any, Callable
 
 _TASKS: dict[str, Callable[..., Any]] = {}
 _ON_DEAD: dict[str, Callable[..., None]] = {}
+_UNCANCELLABLE: set[str] = set()
 
 
 @dataclass(frozen=True)
@@ -19,13 +20,17 @@ class TaskContext:
 current_task: ContextVar[TaskContext | None] = ContextVar("current_task", default=None)
 
 
-def task(name: str | None = None, *, on_dead: Callable[..., None] | None = None):
+def task(name: str | None = None, *, on_dead: Callable[..., None] | None = None,
+         cancellable: bool = True):
     """Register a function as a task. It is called with the task payload as kwargs.
 
     on_dead(session, task, error) is called when the task is marked dead (retries used
     up, a poison task, a bad payload), inside the transaction that marks it, so what
     it records commits together with the dead status. If it raises, the task is not
-    marked dead: its message stays pending and is retried later."""
+    marked dead: its message stays pending and is retried later.
+
+    cancellable=False makes POST /tasks/{id}/cancel refuse the task, for tasks that
+    something else schedules and tracks, which would be stranded if one were cancelled."""
 
     def decorator(fn: Callable[..., Any]) -> Callable[..., Any]:
         key = name or fn.__name__
@@ -34,6 +39,10 @@ def task(name: str | None = None, *, on_dead: Callable[..., None] | None = None)
             _ON_DEAD[key] = on_dead
         else:
             _ON_DEAD.pop(key, None)
+        if cancellable:
+            _UNCANCELLABLE.discard(key)
+        else:
+            _UNCANCELLABLE.add(key)
         return fn
 
     return decorator
@@ -45,6 +54,10 @@ def get(name: str) -> Callable[..., Any] | None:
 
 def on_dead(name: str) -> Callable[..., None] | None:
     return _ON_DEAD.get(name)
+
+
+def uncancellable() -> list[str]:
+    return sorted(_UNCANCELLABLE)
 
 
 def names() -> list[str]:

@@ -155,13 +155,16 @@ def cancel_task(task_id: str):
     with SessionLocal() as s:
         res = s.execute(
             update(Task)
-            .where(Task.id == task_id, Task.status.in_([TaskStatus.QUEUED, TaskStatus.RETRYING]))
+            .where(Task.id == task_id, Task.status.in_([TaskStatus.QUEUED, TaskStatus.RETRYING]),
+                   Task.name.not_in(registry.uncancellable()))
             .values(status=TaskStatus.CANCELLED, finished_at=utcnow())
         )
         s.commit()
         task = s.get(Task, task_id)
     if task is None:
         raise HTTPException(404, "task not found")
+    if task.name in registry.uncancellable():
+        raise HTTPException(409, f"{task.name} tasks cannot be cancelled")
     if res.rowcount == 0:
         raise HTTPException(409, f"task is {task.status.value}, cannot cancel")
     return task
