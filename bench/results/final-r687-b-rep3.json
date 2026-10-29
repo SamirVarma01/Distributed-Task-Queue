@@ -12,7 +12,7 @@
     "concurrency": 8
   },
   "environment": {
-    "commit": "b540f6f",
+    "commit": "6cd4486",
     "uncommitted_changes": false,
     "host": "macOS-26.2-arm64-arm-64bit-Mach-O",
     "cpu": "Apple M2",

@@ -3,7 +3,7 @@
   "workers": 10,
   "tasks": 30000,
   "environment": {
-    "commit": "e9a088b",
+    "commit": "7ddcff1",
     "uncommitted_changes": false,
     "host": "macOS-26.2-arm64-arm-64bit-Mach-O",
     "cpu": "Apple M2",
