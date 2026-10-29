@@ -9,7 +9,7 @@ from sqlalchemy import select, update
 
 from .. import config
 from ..db import SessionLocal, Task, TaskStatus, utcnow
-from . import executor
+from . import executor, llm, tools
 from .models import AgentRun, AgentStep, RunStatus, StepKind, StepStatus
 from .states import ALLOWED_FROM, transition
 
@@ -94,6 +94,11 @@ def submit_run(body: SubmitRun):
     sent, and the reconciler re-sends the step if the API dies in between."""
     if body.queue not in config.QUEUES:
         raise HTTPException(400, f"unknown queue {body.queue!r}; available: {config.QUEUES}")
+    if llm.get_provider(body.model.provider) is None:
+        raise HTTPException(400, f"unknown provider {body.model.provider!r}; available: {llm.provider_names()}")
+    unknown = [name for name in body.tools if tools.get(name) is None]
+    if unknown:
+        raise HTTPException(400, f"unknown tools {unknown}; available: {tools.names()}")
 
     run = AgentRun(id=str(uuid.uuid4()), **body.model_dump(exclude={"model"}), model=body.model.model_dump())
     with SessionLocal() as s:

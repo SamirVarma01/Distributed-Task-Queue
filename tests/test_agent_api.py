@@ -78,6 +78,8 @@ def test_step_tasks_cannot_be_cancelled_directly(client, submit_run):
 
 @pytest.mark.parametrize("body,status", [
     ({"queue": "nope"}, 400),
+    ({"model": {"provider": "nope", "name": "x"}}, 400),
+    ({"tools": ["echo", "nope"]}, 400),
     ({"goal": ""}, 422),
     ({"model": {"provider": "scripted"}}, 422),
     ({"max_steps": 0}, 422),
