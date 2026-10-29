@@ -106,7 +106,13 @@ stateDiagram-v2
 
 `succeeded`, `failed`, `cancelled` and `budget_exceeded` are terminal. `awaiting_approval` stops new work from being scheduled. Tool calls already scheduled in the current turn still finish (section 8).
 
-The allowed transitions live in one table in code. `transition(session, run_id, to, **values)` runs `UPDATE agent_runs SET status = :to, ... WHERE id = :id AND status IN (<states allowed to move to :to>)` and returns whether a row changed. Requesting a transition the table doesn't allow raises `InvalidTransition`, since that is a bug. Losing a race to another transition returns False, which is normal (approve vs cancel, for example). This is DTQ's conditional claim applied to runs.
+The allowed transitions live in one table in code (`dtq/agents/states.py`). `transition(session, run_id, src, dst, **values)` runs `UPDATE agent_runs SET status = :dst, ... WHERE id = :id AND status IN (:src)` and returns whether a row changed. Moving to a terminal status also sets `finished_at`.
+
+- **The caller names the states it expects to move the run from.** Approving therefore moves only an `awaiting_approval` run to `running`, and never starts a queued one, even though `queued → running` is also a legal move.
+- **A move the table doesn't allow raises `InvalidTransition`,** since that is a bug.
+- **A run in none of the source states returns False,** which is normal. It has already moved on, for example a cancel that lost a race to an approval.
+
+This is DTQ's conditional claim applied to runs. A test checks that the diagram above matches the table.
 
 ## 4. Turns and steps
 

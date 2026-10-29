@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select, update
 
 from . import config, registry, tasks  # noqa: F401  (tasks import registers them)
+from .agents.api import router as agents_router
 from .broker import Broker
 from .db import SessionLocal, Task, TaskStatus, utcnow, wait_for_db
 
@@ -21,6 +22,7 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="DTQ", lifespan=lifespan)
+app.include_router(agents_router)
 
 
 class SubmitTask(BaseModel):
