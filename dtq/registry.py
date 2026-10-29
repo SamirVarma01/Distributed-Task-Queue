@@ -1,7 +1,21 @@
 import inspect
+from contextvars import ContextVar
+from dataclasses import dataclass
 from typing import Any, Callable
 
 _TASKS: dict[str, Callable[..., Any]] = {}
+
+
+@dataclass(frozen=True)
+class TaskContext:
+    id: str
+    # This execution's attempt number. Each claim increments it, so a task can use it as a
+    # fencing token: a later attempt always has a higher number than a stale one.
+    attempt: int
+
+
+# Set by the worker while a task function runs.
+current_task: ContextVar[TaskContext | None] = ContextVar("current_task", default=None)
 
 
 def task(name: str | None = None):

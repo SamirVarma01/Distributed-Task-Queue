@@ -5,6 +5,7 @@ from sqlalchemy import update
 
 from dtq import config
 from dtq.db import SessionLocal, Task, TaskStatus, utcnow
+from dtq import registry
 from dtq.registry import task as register_task
 
 from .conftest import get_task, pending_count
@@ -381,3 +382,19 @@ def test_record_execution_records_every_run(submit, make_worker, monkeypatch):
     assert len(entries) == 2
     when, host = entries[0].split()
     assert float(when) > 0 and host
+
+
+def test_task_can_read_its_id_and_attempt(submit, make_worker):
+    seen = []
+
+    @register_task("record_context")
+    def record_context():
+        seen.append(registry.current_task.get())
+        if len(seen) == 1:
+            raise RuntimeError("fail the first attempt")
+
+    task_id = submit("record_context")
+    drain(make_worker())
+
+    assert seen == [registry.TaskContext(task_id, 1), registry.TaskContext(task_id, 2)]
+    assert registry.current_task.get() is None

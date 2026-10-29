@@ -166,7 +166,7 @@ class Worker:
 
         log.info("running %s %s (attempt %d)", task.name, task.id, task.attempts)
         try:
-            result = fn(**task.payload)
+            result = self._call(fn, task)
         except Exception:
             self._on_failure(task, traceback.format_exc())
         else:
@@ -177,6 +177,14 @@ class Worker:
             except (TypeError, ValueError):
                 result = repr(result)
             self._finish(task, TaskStatus.SUCCEEDED, result=result)
+
+    @staticmethod
+    def _call(fn, task: Task):
+        token = registry.current_task.set(registry.TaskContext(task.id, task.attempts))
+        try:
+            return fn(**task.payload)
+        finally:
+            registry.current_task.reset(token)
 
     def _on_failure(self, task: Task, error: str):
         if task.attempts > task.max_retries:
