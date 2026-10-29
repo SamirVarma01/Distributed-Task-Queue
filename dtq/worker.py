@@ -12,6 +12,7 @@ from datetime import timedelta
 from sqlalchemy import select, update
 
 from . import config, registry, tasks  # noqa: F401  (tasks import registers them)
+from .agents import demo, executor  # noqa: F401  (register agent_step and the demo tools)
 from .broker import Broker
 from .db import SessionLocal, Task, TaskStatus, utcnow, wait_for_db
 

@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select, update
 
 from . import config, registry, tasks  # noqa: F401  (tasks import registers them)
+from .agents import demo  # noqa: F401  (registers the demo tools and scripts)
 from .agents.api import router as agents_router
 from .broker import Broker
 from .db import SessionLocal, Task, TaskStatus, utcnow, wait_for_db

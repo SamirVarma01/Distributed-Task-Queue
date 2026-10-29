@@ -2,12 +2,14 @@ import uuid
 from datetime import datetime
 from typing import Any
 
+import redis
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from .. import config
-from ..db import SessionLocal
+from ..db import SessionLocal, Task, TaskStatus, utcnow
+from . import executor
 from .models import AgentRun, AgentStep, RunStatus, StepKind, StepStatus
 from .states import ALLOWED_FROM, transition
 
@@ -87,18 +89,27 @@ class StepOut(BaseModel):
 
 @router.post("/runs", response_model=RunOut, status_code=202)
 def submit_run(body: SubmitRun):
-    """Create a run and its first step, an LLM call. Steps don't execute yet: the step
-    executor, which enqueues them as DTQ tasks, is agent runtime Phase 2."""
+    """Create a run and its first step, an LLM call, and enqueue that step. Same order
+    and failure handling as POST /tasks: the rows are committed before the message is
+    sent, and the reconciler re-sends the step if the API dies in between."""
     if body.queue not in config.QUEUES:
         raise HTTPException(400, f"unknown queue {body.queue!r}; available: {config.QUEUES}")
+
     run = AgentRun(id=str(uuid.uuid4()), **body.model_dump(exclude={"model"}), model=body.model.model_dump())
-    first = AgentStep(run_id=run.id, step_no=0, turn=0, kind=StepKind.LLM, status=StepStatus.PENDING,
-                      input={"model": body.model.name, "max_output_tokens": body.model.max_output_tokens})
     with SessionLocal() as s:
         s.add(run)
         s.flush()  # the step's foreign key needs the run's row first
-        s.add(first)
+        first = executor.new_step(s, run, 0, StepKind.LLM, 0, executor.llm_step_input(run.model))
         s.commit()
+        try:
+            executor.send([first])
+        except redis.RedisError as exc:
+            error = f"enqueue failed: {exc}"
+            s.execute(update(Task).where(Task.id == first.id)
+                      .values(status=TaskStatus.DEAD, error=error, finished_at=utcnow()))
+            transition(s, run.id, RunStatus.QUEUED, RunStatus.FAILED, error=error)
+            s.commit()
+            raise HTTPException(503, "broker unavailable")
     return run
 
 
