@@ -1,10 +1,10 @@
 # Why throughput plateaus between 5 and 10 workers
 
-> **Update after Phase 1.5:** the sections below describe the code at `c88c862`. The Phase 1.5 changes cut MySQL's commit cost, but flushing Redis to disk on every write, which at-least-once delivery needs, then cost about 30% of throughput. Latency at moderate load improved about 40×, and maximum throughput did not improve. See [Phase 1.5](#phase-15-changes-and-their-measured-effect) at the end.
+> **Update after Phase 1.5:** the sections below describe the code at `4bcdeb2`. The Phase 1.5 changes cut MySQL's commit cost, but flushing Redis to disk on every write, which at-least-once delivery needs, then cost about 30% of throughput. Latency at moderate load improved about 40×, and maximum throughput did not improve. See [Phase 1.5](#phase-15-changes-and-their-measured-effect) at the end.
 
 **Bottleneck:** MySQL's durable commit. Each task commits twice in the worker (the claim and the result). With the default `innodb_flush_log_at_trx_commit=1` and `sync_binlog=1`, every commit waits for a flush to disk. More workers do not make those flushes faster. Commits just queue up behind each other, so each commit takes longer and total throughput barely rises.
 
-All numbers below come from the `summary.json` and `mysql_digests.csv` files in this directory, produced by `scripts/profile_bench.py --tasks 30000` (Apple M2, Docker limited to 8 CPUs and 3.8 GiB, commit `c88c862`). Derived values are computed from those files: per-task worker time = workers / throughput, and commits in flight = commits/s × average commit latency (Little's law).
+All numbers below come from the `summary.json` and `mysql_digests.csv` files in this directory, produced by `scripts/profile_bench.py --tasks 30000` (Apple M2, Docker limited to 8 CPUs and 3.8 GiB, commit `4bcdeb2`). Derived values are computed from those files: per-task worker time = workers / throughput, and commits in flight = commits/s × average commit latency (Little's law).
 
 ## Evidence
 
@@ -61,11 +61,11 @@ Compare numbers within a comparison, not across them. Changes 1–3 were measure
 
 | change | A → B | runs | median A → B | throughput ratio B/A per pair |
 |---|---|---|---|---|
-| 1. Drop redundant round trips | `e9a088b` → `cff1bd8` | 3 pairs | MySQL round trips per task 13.09 → 8.07 (`ROLLBACK` 4.01 → 0, pings 3 → 2); throughput 446 → 484 tasks/s | 0.71, 1.42, 0.97 |
-| 2. Disable the binary log | `cff1bd8` → `eb6196d` | 3 pairs | `COMMIT` 5.01 → 3.01 ms; throughput 550 → 644 tasks/s | 1.08, 1.09, 1.91 |
-| 3. Blocking read instead of a 0.5 s idle sleep | `73e4938` → `83b4cbf` | 3 + 3 pairs | burst throughput 906 → 932 tasks/s (no change expected); at 430/s, latency p50 254 → 6 ms and p95 484 → 15 ms | 1.00, 1.08, 0.73 |
-| Fix: Redis `appendfsync always` | `f844ee3` → `b540f6f` | 3 pairs | throughput 1084 → 754 tasks/s; Redis CPU about 14–15% → about 10% | 0.63, 0.81, 0.70 |
-| Opt-in `innodb_flush_log_at_trx_commit=2` (not the default) | `1ecf99e` → same commit with `MYSQL_FLUSH_LOG_AT_TRX_COMMIT=2` | 3 pairs | throughput 1026 → 1325 tasks/s; `COMMIT` 1.58 → 0.37 ms; redo-log fsyncs 1090/s → 15/s | 1.29, 1.19, 1.32 |
+| 1. Drop redundant round trips | `7ddcff1` → `94e0dc5` | 3 pairs | MySQL round trips per task 13.09 → 8.07 (`ROLLBACK` 4.01 → 0, pings 3 → 2); throughput 446 → 484 tasks/s | 0.71, 1.42, 0.97 |
+| 2. Disable the binary log | `94e0dc5` → `066c63a` | 3 pairs | `COMMIT` 5.01 → 3.01 ms; throughput 550 → 644 tasks/s | 1.08, 1.09, 1.91 |
+| 3. Blocking read instead of a 0.5 s idle sleep | `9e14866` → `9cd449d` | 3 + 3 pairs | burst throughput 906 → 932 tasks/s (no change expected); at 430/s, latency p50 254 → 6 ms and p95 484 → 15 ms | 1.00, 1.08, 0.73 |
+| Fix: Redis `appendfsync always` | `89511a3` → `6cd4486` | 3 pairs | throughput 1084 → 754 tasks/s; Redis CPU about 14–15% → about 10% | 0.63, 0.81, 0.70 |
+| Opt-in `innodb_flush_log_at_trx_commit=2` (not the default) | `c8eed96` → same commit with `MYSQL_FLUSH_LOG_AT_TRX_COMMIT=2` | 3 pairs | throughput 1026 → 1325 tasks/s; `COMMIT` 1.58 → 0.37 ms; redo-log fsyncs 1090/s → 15/s | 1.29, 1.19, 1.32 |
 
 - **Change 1** removed exactly what the MySQL general log showed was redundant. Its effect on throughput was smaller than the run-to-run noise (pair ratios on both sides of 1), so this table doesn't claim one.
 - **Change 3's latency gain** is consistent across pairs: p95 was 484–485 ms for A and 12–19 ms for B.
@@ -73,7 +73,7 @@ Compare numbers within a comparison, not across them. Changes 1–3 were measure
 
 ### Baseline vs final
 
-Baseline is `e9a088b` (the Phase 1 code). Final is `b540f6f`: all Phase 1.5 changes, the bug fixes, and Redis `appendfsync always`.
+Baseline is `7ddcff1` (the Phase 1 code). Final is `6cd4486`: all Phase 1.5 changes, the bug fixes, and Redis `appendfsync always`.
 
 | workload | runs | baseline | final |
 |---|---|---|---|
