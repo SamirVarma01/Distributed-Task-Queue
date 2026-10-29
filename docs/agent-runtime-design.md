@@ -99,6 +99,7 @@ stateDiagram-v2
     running --> succeeded: LLM gives a final answer
     running --> budget_exceeded: budget check before an LLM call
     running --> failed: step's DTQ task goes dead, or non-retryable LLM error
+    queued --> failed: Redis down at submit, or the first step's task goes dead
     queued --> cancelled: cancel
     running --> cancelled: cancel
     awaiting_approval --> cancelled: cancel
@@ -145,7 +146,7 @@ Call the LLM or the tool. DTQ's heartbeat keeps the message from being reclaimed
 
 1. **Record the outcome.** `UPDATE agent_steps SET status, output, usage, finished_at WHERE run_id = :run AND step_no = :n AND status = 'started' AND attempt = :mine`. If no row matches, another attempt has taken over. Roll back and return.
 2. **Add the usage** to the run's totals.
-3. **Advance**, decided by `plan_next` (section 6):
+3. **Advance** (section 6):
    - **LLM step with a final answer:** move the run to `succeeded` and set `result`.
    - **LLM step requesting tools:** create the turn's tool steps and their tasks (or the approval step), and set `calls_remaining`.
    - **Tool step:** run one conditional update, `SET calls_remaining = 0, turn = <new LLM step>, ... WHERE id = :run AND turn = :turn AND calls_remaining = 1 AND status = 'running'`. If it matches, this was the turn's last call, so create the next LLM step and its task. If it doesn't, decrement `calls_remaining` (`WHERE turn = :turn`) and create nothing.
@@ -157,7 +158,7 @@ After the commit, `agent_step` XADDs a message for every task it created and set
 
 `POST /runs` follows the same order as `POST /tasks`. It inserts the run, step 0 and step 0's task in one transaction, then XADDs. If Redis is down, it marks the task dead and the run failed, and returns 503.
 
-**What a step costs.** Each step makes four MySQL commits: DTQ's claim, A, C, and DTQ's result. A turn's parallel tool steps all update the run row in C, so their commits wait on each other for that row's lock. Phase 6's benchmark measures both costs.
+**What a step costs.** Each step makes five MySQL commits: DTQ's claim, A, C, setting `enqueued_at` on the steps C created, and DTQ's result. A turn's parallel tool steps all update the run row in C, so their commits wait on each other for that row's lock. Phase 6's benchmark measures both costs.
 
 ## 5. Why a run can't fork
 
@@ -188,7 +189,9 @@ A run's state is its rows. Everything a step needs is rebuilt from recorded step
   - then, for each turn: the LLM step's output as an assistant message, followed by one tool result per call.
 
   The tool results go in the order the LLM listed the calls, not the order the calls finished, so the prompt is the same whichever call finished first. A call's result is the output of its last tool step, since a retry supersedes an unknown outcome, or the output a person supplied when approving.
-- **What comes next depends only on history.** `plan_next(run, steps)` runs inside C, under the run row's lock. It returns one of: final answer, the turn's tool steps, an approval step, or the next LLM step. It reads only committed rows, so it can be tested on its own with table-driven cases.
+- **What comes next depends only on recorded state.**
+  - After an LLM step, its recorded response decides: no tool calls means the run succeeds, and otherwise the turn's tool steps (or, from Phase 4, an approval step) are created.
+  - After a tool step, `calls_remaining` decides (section 5). It isn't worked out by re-reading the turn's other steps: under concurrency, a transaction can miss a sibling's result that committed while it was waiting for the run row's lock, but the counter is updated under that lock.
 - **Resuming is DTQ's reclaim.** The interrupted step's message is reclaimed after the visibility timeout, and the step starts again at A. In the DTQ chaos test, recovery after a worker kill took a median of 31.5 s, set by the 30 s `VISIBILITY_TIMEOUT_MS` (`bench/results/chaos-10000t-w5-k5-20261027-062824.json`).
 
 | worker dies | state it leaves | what happens next |
@@ -359,7 +362,7 @@ How the unfinished DTQ phases affect this:
 | a step task that goes dead fails the run | a ScriptedLLM step that always raises a retryable error |
 | each budget, including wall time excluding paused time | one test each |
 | approve, reject, cancel, and their races | one test each, including approving while a turn's other calls are still running |
-| `plan_next` | table-driven cases |
+| prompt rebuilding | the same prompt whatever order steps are read or finish in |
 
 **Phase 6's chaos test** does the same against the real stack, with `docker kill`. It reports duplicate side effects (from the sink), `unknown_outcome` steps, calls settled by `check`, re-executed steps, and how long runs took to resume.
 

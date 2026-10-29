@@ -12,6 +12,7 @@ from datetime import timedelta
 from sqlalchemy import select, update
 
 from . import config, registry, tasks  # noqa: F401  (tasks import registers them)
+from .agents import demo, executor  # noqa: F401  (register agent_step and the demo tools)
 from .broker import Broker
 from .db import SessionLocal, Task, TaskStatus, utcnow, wait_for_db
 
@@ -166,7 +167,7 @@ class Worker:
 
         log.info("running %s %s (attempt %d)", task.name, task.id, task.attempts)
         try:
-            result = fn(**task.payload)
+            result = self._call(fn, task)
         except Exception:
             self._on_failure(task, traceback.format_exc())
         else:
@@ -177,6 +178,14 @@ class Worker:
             except (TypeError, ValueError):
                 result = repr(result)
             self._finish(task, TaskStatus.SUCCEEDED, result=result)
+
+    @staticmethod
+    def _call(fn, task: Task):
+        token = registry.current_task.set(registry.TaskContext(task.id, task.attempts))
+        try:
+            return fn(**task.payload)
+        finally:
+            registry.current_task.reset(token)
 
     def _on_failure(self, task: Task, error: str):
         if task.attempts > task.max_retries:
@@ -206,6 +215,9 @@ class Worker:
                 .where(Task.id == task.id, Task.status == TaskStatus.RUNNING, Task.attempts == task.attempts)
                 .values(**values)
             )
+            hook = registry.on_dead(task.name) if values.get("status") == TaskStatus.DEAD else None
+            if res.rowcount and hook:
+                hook(s, task, values.get("error"))
             s.commit()
         if not res.rowcount:
             log.warning("task %s attempt %d was taken over by another worker; dropping its outcome",
