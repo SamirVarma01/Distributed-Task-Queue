@@ -214,6 +214,9 @@ class Worker:
                 .where(Task.id == task.id, Task.status == TaskStatus.RUNNING, Task.attempts == task.attempts)
                 .values(**values)
             )
+            hook = registry.on_dead(task.name) if values.get("status") == TaskStatus.DEAD else None
+            if res.rowcount and hook:
+                hook(s, task, values.get("error"))
             s.commit()
         if not res.rowcount:
             log.warning("task %s attempt %d was taken over by another worker; dropping its outcome",

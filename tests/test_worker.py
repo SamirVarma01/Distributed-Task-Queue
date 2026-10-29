@@ -398,3 +398,40 @@ def test_task_can_read_its_id_and_attempt(submit, make_worker):
 
     assert seen == [registry.TaskContext(task_id, 1), registry.TaskContext(task_id, 2)]
     assert registry.current_task.get() is None
+
+
+def test_on_dead_hook_commits_with_the_dead_status(submit, make_worker):
+    hooked = []
+
+    def on_dead(session, task, error):
+        hooked.append((task.id, error.splitlines()[-1]))
+        session.execute(update(Task).where(Task.id == task.id).values(result="recorded by on_dead"))
+
+    @register_task("always_fails", on_dead=on_dead)
+    def always_fails():
+        raise RuntimeError("boom")
+
+    task_id = submit("always_fails", max_retries=1)
+    drain(make_worker())
+
+    task = get_task(task_id)
+    assert task.status == TaskStatus.DEAD
+    assert task.result == "recorded by on_dead"
+    assert hooked == [(task_id, "RuntimeError: boom")]
+
+
+def test_task_stays_pending_if_on_dead_hook_fails(submit, make_worker):
+    def on_dead(session, task, error):
+        raise ConnectionError("mysql went away")
+
+    @register_task("fails_and_hook_fails", on_dead=on_dead)
+    def fails_and_hook_fails():
+        raise RuntimeError("boom")
+
+    task_id = submit("fails_and_hook_fails", max_retries=0)
+    w = make_worker()
+    with pytest.raises(ConnectionError):
+        w.step()
+
+    assert get_task(task_id).status == TaskStatus.RUNNING
+    assert pending_count(w.broker, "default") == 1
