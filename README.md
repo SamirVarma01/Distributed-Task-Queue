@@ -83,6 +83,12 @@ def fetch_report(url: str) -> dict:
 
 **Delivery is at-least-once.** A worker can crash after a task's side effects happen but before it records the result. When that happens the task runs again, so tasks should be idempotent.
 
+## Design decisions
+
+- **Ack after the outcome is saved.** A worker acks a message only once the task's outcome is committed in MySQL. If it acked first and then crashed, the message would be gone while the row still said `running`, and nothing would ever run the task again. Acking last turns that crash into a redelivery instead, and the conditional claim skips the task if its outcome was already saved.
+- **One message per slot.** A worker reads a message only when a slot is free to start it at once, so every message it holds is running and heartbeated. A prefetched message waiting in a local buffer would either get no heartbeat, and be reclaimed and run twice, or be heartbeated and stay stuck behind slow tasks while other workers sat idle. The cost is one Redis read per task instead of one per batch.
+- **At-least-once delivery.** Exactly-once would need a task's side effects and the record of its outcome to commit together, and a function that calls an outside system can't join a MySQL transaction. So DTQ never loses a task, and accepts that a task whose worker dies mid-run runs again; the [chaos test](#results) counts how often. Tasks should be idempotent. The agent runtime goes further for side-effecting tools, which it never calls twice (see [What it guarantees](#what-it-guarantees)).
+
 ## Durability settings
 
 MySQL runs with `--disable-log-bin`. The binary log is used for replication and point-in-time recovery. This stack does neither: there is one MySQL server, and the data is reset freely. Waiting for disk flushes on commit was the main limit on worker throughput (see `bench/profiles/FINDINGS.md`), and keeping the binary log consistent with InnoDB adds a second flush, of the binary log, to each commit. Turning it off doesn't weaken durability: with `innodb_flush_log_at_trx_commit=1` (the default, unchanged), InnoDB's redo log is flushed to disk before each commit returns, so a committed claim or result survives a crash. If you add a replica or need point-in-time recovery, remove the flag.
