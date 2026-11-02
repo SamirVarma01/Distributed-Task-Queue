@@ -1,6 +1,7 @@
-from typing import Literal
+from typing import Annotated, Literal
 
 import pytest
+from pydantic import Field
 
 from dtq.agents import tools
 from dtq.agents.tools import Effect, tool
@@ -41,7 +42,7 @@ def test_side_effect_is_the_default_and_only_side_effecting_tools_take_a_check()
 
 
 @tool(effect="read_only")
-def search(query: str, limit: int = 10, tags: list[str] | None = None, order: Literal["new", "old"] = "new",
+def search(query: str, limit: Annotated[int, Field(ge=1, le=50)] = 10, tags: list[str] | None = None, order: Literal["new", "old"] = "new",
            *, idempotency_key: str) -> list:
     """Search."""
     return []
@@ -55,6 +56,7 @@ def test_parameter_schema_comes_from_type_hints():
     props = schema["properties"]
     assert set(props) == {"query", "limit", "tags", "order"}  # not idempotency_key
     assert (props["query"]["type"], props["limit"]["type"], props["limit"]["default"]) == ("string", "integer", 10)
+    assert (props["limit"]["minimum"], props["limit"]["maximum"]) == (1, 50)
     assert props["order"]["enum"] == ["new", "old"]
     assert {"type": "array", "items": {"type": "string"}} in props["tags"]["anyOf"]
 
@@ -63,8 +65,9 @@ def test_bind_args_validates_types():
     t = tools.get("search")
     assert tools.bind_args(t, {"query": "q", "tags": ["a"]}, "run:3") == {
         "query": "q", "limit": 10, "tags": ["a"], "order": "new", "idempotency_key": "run:3"}
-    with pytest.raises(TypeError, match="limit"):
-        tools.bind_args(t, {"query": "q", "limit": "many"}, "run:3")
+    for limit in ("many", 0, 51):
+        with pytest.raises(TypeError, match="limit"):
+            tools.bind_args(t, {"query": "q", "limit": limit}, "run:3")
     with pytest.raises(TypeError, match="order"):
         tools.bind_args(t, {"query": "q", "order": "random"}, "run:3")
     with pytest.raises(TypeError):

@@ -47,7 +47,7 @@ class Tool:
 
 
 def _args_model(fn: Callable[..., Any]) -> type[BaseModel]:
-    hints = typing.get_type_hints(fn)
+    hints = typing.get_type_hints(fn, include_extras=True)  # keep Annotated[..., Field(...)]
     fields: dict[str, Any] = {}
     for p in inspect.signature(fn).parameters.values():
         if p.kind in (p.VAR_POSITIONAL, p.VAR_KEYWORD):
