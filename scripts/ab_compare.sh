@@ -48,7 +48,7 @@ for i in $(seq "$pairs"); do
       if [ "$kind" = profile ]; then
         "$PYTHON" scripts/profile_bench.py --no-reset --workers "$WORKERS" --label "$name-$side-$i" "$@"
       else
-        "$PYTHON" scripts/bench.py --workers "$WORKERS" --label "$name-$side-rep$i" "$@"
+        env $side_env "$PYTHON" scripts/bench.py --workers "$WORKERS" --label "$name-$side-rep$i" "$@"
       fi
     ) >"$log" 2>&1; then
       echo "run failed; last lines of its output:"

@@ -30,6 +30,7 @@ Percentiles use the nearest-rank method.
 import argparse
 import json
 import math
+import os
 import platform
 import subprocess
 import sys
@@ -49,6 +50,8 @@ SUMMARY_HEADER = (
     "| not succeeded | commit |\n"
     "|---|---|---|---|---|---|---|---|---|---|---|---|---|\n"
 )
+
+COMPOSE_SETTINGS = ("DEFAULT_TASK_TIMEOUT_SECONDS", "MYSQL_FLUSH_LOG_AT_TRX_COMMIT", "REDIS_APPENDFSYNC")
 
 COUNT_TERMINAL = text(
     "SELECT COUNT(*) FROM tasks WHERE status IN ('succeeded', 'dead', 'cancelled') AND id IN :ids"
@@ -118,6 +121,9 @@ def environment() -> dict:
         "docker_mem_gib": round(int(mem) / 2**30, 1) if mem else None,
         "docker_version": version,
         "power": power_source(),
+        # Settings docker compose passes to the stack, as set in the environment this
+        # script runs in; run_bench_matrix.sh and ab_compare.sh start the stack from it.
+        "compose_env": {k: v for k in COMPOSE_SETTINGS if (v := os.getenv(k))},
     }
 
 
