@@ -120,6 +120,7 @@ GitHub Actions (`.github/workflows/ci.yml`) runs the unit tests on every push an
 
 ```sh
 scripts/run_bench_matrix.sh                    # 10000 noop tasks at 1, 5 and 10 workers
+CONFIGS="1x1 1x5 1x10 5x1 10x1" REPEATS=3 scripts/run_bench_matrix.sh   # WORKERSxSLOTS: slots per worker set by WORKER_CONCURRENCY
 WORKER_COUNTS=10 RATES="430 687" scripts/run_bench_matrix.sh --duration 60   # open-loop latency at fixed rates
 python scripts/bench.py --tasks 10000 --task sleep_ms --sleep-ms 10   # one run against the current stack
 ```
