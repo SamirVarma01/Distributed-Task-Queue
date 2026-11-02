@@ -88,18 +88,24 @@ def submit(client):
 @pytest.fixture
 def make_worker():
     """Create in-process workers with distinct consumer names (in one process they
-    would share hostname-pid). They are driven with step() instead of run()."""
+    would share hostname-pid). They are driven with step() instead of run(), and closed
+    at the end."""
     from dtq import config
     from dtq.worker import Worker
+
+    workers = []
 
     def make(name: str = "w1"):
         w = Worker()
         w.id = name
         for q in config.QUEUES:
             w.broker.ensure_group(q)
+        workers.append(w)
         return w
 
-    return make
+    yield make
+    for w in workers:
+        w.close()
 
 
 @pytest.fixture

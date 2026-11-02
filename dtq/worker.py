@@ -20,25 +20,48 @@ log = logging.getLogger("dtq.worker")
 
 
 class Heartbeat(threading.Thread):
-    """Keeps an in-flight message's idle time low so other workers don't reclaim it."""
+    """Keeps every in-flight message's idle time low so other workers don't reclaim it.
+    One per worker, started when its first message is added; it touches each message in
+    the table every HEARTBEAT_SECONDS."""
 
-    def __init__(self, broker: Broker, consumer: str, stream: str, msg_id: str):
-        super().__init__(daemon=True)
-        self.broker, self.consumer, self.stream, self.msg_id = broker, consumer, stream, msg_id
+    def __init__(self, broker: Broker):
+        super().__init__(daemon=True, name="heartbeat")
+        self.broker = broker
+        self._in_flight: dict[str, tuple[str, str]] = {}  # message id -> (stream, consumer)
+        self._lock = threading.Lock()
         self._stop_event = threading.Event()
+
+    def add(self, consumer: str, stream: str, msg_id: str) -> None:
+        with self._lock:
+            self._in_flight[msg_id] = (stream, consumer)
+            if not self.is_alive() and not self._stop_event.is_set():
+                self.start()
+
+    def remove(self, msg_id: str) -> None:
+        """Stop touching a message. Once this returns, no touch of it is in progress or
+        will start, so the message can be acked."""
+        with self._lock:
+            self._in_flight.pop(msg_id, None)
 
     def run(self):
         while not self._stop_event.wait(config.HEARTBEAT_SECONDS):
-            try:
-                if not self.broker.touch(self.consumer, self.stream, self.msg_id):
-                    log.warning("message %s was reclaimed by another worker; heartbeat stopped", self.msg_id)
-                    return
-            except Exception:
-                log.exception("heartbeat failed for %s", self.msg_id)
+            with self._lock:
+                messages = list(self._in_flight.items())
+            for msg_id, (stream, consumer) in messages:
+                with self._lock:  # held per message, so remove() waits for a touch in progress
+                    if msg_id not in self._in_flight:
+                        continue
+                    try:
+                        if not self.broker.touch(consumer, stream, msg_id):
+                            log.warning("message %s was reclaimed by another worker; no longer touching it", msg_id)
+                            del self._in_flight[msg_id]
+                    except Exception:
+                        log.exception("heartbeat failed for %s", msg_id)
 
     def stop(self):
         self._stop_event.set()
-        self.join()
+        if self.is_alive():
+            self.join()
 
 
 class Worker:
@@ -48,6 +71,7 @@ class Worker:
         self.task_process = TaskProcess()  # runs tasks that have a timeout; started when first needed
         self.queues = config.QUEUES
         self.stopping = False
+        self.heartbeat = Heartbeat(self.broker)
         self._last_reclaim = 0.0
         self._last_reconcile = 0.0
 
@@ -69,8 +93,13 @@ class Worker:
                     log.exception("worker loop failed; retrying in %.0fs", config.ERROR_BACKOFF_SECONDS)
                     time.sleep(config.ERROR_BACKOFF_SECONDS)
         finally:
-            self.task_process.stop()
+            self.close()
         log.info("worker %s stopped", self.id)
+
+    def close(self) -> None:
+        """Stop the heartbeat and the child process."""
+        self.heartbeat.stop()
+        self.task_process.stop()
 
     def step(self, block_ms: int = 0) -> bool:
         """One loop iteration: promote due retries, re-send lost tasks, reclaim stale
@@ -126,12 +155,11 @@ class Worker:
             self.broker.ack(self.id, stream, msg_id)
             return
 
-        heartbeat = Heartbeat(self.broker, self.id, stream, msg_id)
-        heartbeat.start()
+        self.heartbeat.add(self.id, stream, msg_id)
         try:
             self._execute(task)
         finally:
-            heartbeat.stop()
+            self.heartbeat.remove(msg_id)
         # Ack only once the outcome is recorded. If recording it raised (MySQL or Redis
         # down), the message stays pending and is reclaimed after the visibility timeout.
         self.broker.ack(self.id, stream, msg_id)
