@@ -22,6 +22,7 @@ class ToolCall:
 class ToolSpec:
     name: str
     description: str
+    parameters: dict[str, Any]  # JSON schema of the tool's arguments
 
 
 @dataclass(frozen=True)

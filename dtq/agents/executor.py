@@ -173,7 +173,7 @@ def _call_llm(run: AgentRun, step: AgentStep, messages: list) -> Outcome:
         model=run.model["name"],
         system=run.model["system"],
         messages=messages,
-        tools=[llm.ToolSpec(t.name, t.description) for name in run.tools if (t := tools.get(name))],
+        tools=[llm.ToolSpec(t.name, t.description, t.parameters) for name in run.tools if (t := tools.get(name))],
         max_output_tokens=run.model["max_output_tokens"],
         idempotency_key=f"{run.id}:{step.step_no}",
     )

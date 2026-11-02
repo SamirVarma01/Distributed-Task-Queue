@@ -1,3 +1,5 @@
+from typing import Literal
+
 import pytest
 
 from dtq.agents import tools
@@ -34,8 +36,45 @@ def test_side_effecting_tools_wait_for_phase_3():
     assert "send" not in tools.names() and "undeclared" not in tools.names()
 
 
+@tool(effect="read_only")
+def search(query: str, limit: int = 10, tags: list[str] | None = None, order: Literal["new", "old"] = "new",
+           *, idempotency_key: str) -> list:
+    """Search."""
+    return []
+
+
+def test_parameter_schema_comes_from_type_hints():
+    schema = tools.get("search").parameters
+
+    assert schema["required"] == ["query"]
+    assert schema["additionalProperties"] is False
+    props = schema["properties"]
+    assert set(props) == {"query", "limit", "tags", "order"}  # not idempotency_key
+    assert (props["query"]["type"], props["limit"]["type"], props["limit"]["default"]) == ("string", "integer", 10)
+    assert props["order"]["enum"] == ["new", "old"]
+    assert {"type": "array", "items": {"type": "string"}} in props["tags"]["anyOf"]
+
+
+def test_bind_args_validates_types():
+    t = tools.get("search")
+    assert tools.bind_args(t, {"query": "q", "tags": ["a"]}, "run:3") == {
+        "query": "q", "limit": 10, "tags": ["a"], "order": "new", "idempotency_key": "run:3"}
+    with pytest.raises(TypeError, match="limit"):
+        tools.bind_args(t, {"query": "q", "limit": "many"}, "run:3")
+    with pytest.raises(TypeError, match="order"):
+        tools.bind_args(t, {"query": "q", "order": "random"}, "run:3")
+    with pytest.raises(TypeError):
+        tools.bind_args(t, ["not", "an", "object"], "run:3")
+
+
+def test_tools_take_named_parameters_only():
+    with pytest.raises(TypeError, match="named parameters only"):
+        @tool(effect="read_only")
+        def varargs(*items): ...
+
+
 def test_bind_args_passes_the_idempotency_key_to_tools_that_take_it():
-    assert tools.bind_args(tools.get("read_setting"), {"key": "k"}, "run:3") == {"key": "k"}
+    assert tools.bind_args(tools.get("read_setting"), {"key": "k"}, "run:3") == {"key": "k", "default": ""}
     assert tools.bind_args(tools.get("upsert_record"), {"record": {}}, "run:3") == {
         "record": {}, "idempotency_key": "run:3"}
 
