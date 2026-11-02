@@ -32,7 +32,7 @@ def test_submit_creates_a_queued_run_and_enqueues_its_first_llm_step(client, sub
     run = submit_run(tools=["echo"], queue="high", max_steps=5, max_tokens=1000)
 
     assert run["status"] == "queued"
-    assert run["model"] == {**MODEL, "system": "", "max_output_tokens": 1024}
+    assert run["model"] == {**MODEL, "system": "", "max_output_tokens": 16000, "effort": None}
     assert run["tools"] == ["echo"]
     assert run["queue"] == "high"
     assert (run["max_steps"], run["max_tokens"], run["max_cost_micros"], run["max_wall_seconds"]) == (5, 1000, None, None)
@@ -42,7 +42,7 @@ def test_submit_creates_a_queued_run_and_enqueues_its_first_llm_step(client, sub
 
     [step] = client.get(f"/runs/{run['id']}/steps").json()
     assert (step["step_no"], step["turn"], step["kind"], step["status"]) == (0, 0, "llm", "pending")
-    assert step["input"] == {"model": "two-turns", "max_output_tokens": 1024}
+    assert step["input"] == {"model": "two-turns", "max_output_tokens": 16000}
     assert step["attempt"] is None
 
     task = get_task(executor.step_task_id(run["id"], 0))

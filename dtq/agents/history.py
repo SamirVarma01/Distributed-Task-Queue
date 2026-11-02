@@ -35,7 +35,10 @@ def build_messages(goal: str, steps: Iterable[AgentStep]) -> list[dict[str, Any]
     messages: list[dict[str, Any]] = [{"role": "user", "content": goal}]
     for llm in sorted((s for s in steps if s.kind == StepKind.LLM and s.status == StepStatus.SUCCEEDED),
                       key=lambda s: s.step_no):
-        messages.append({"role": "assistant", "content": llm.output["text"], "tool_calls": llm.output["tool_calls"]})
+        assistant = {"role": "assistant", "content": llm.output["text"], "tool_calls": llm.output["tool_calls"]}
+        if "provider_content" in llm.output:
+            assistant["provider_content"] = llm.output["provider_content"]
+        messages.append(assistant)
         results = call_results(steps, llm.step_no)
         for call in llm.output["tool_calls"]:
             if call["id"] in results:

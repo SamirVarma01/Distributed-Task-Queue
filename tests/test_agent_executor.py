@@ -1,6 +1,6 @@
 import pytest
 from dtq import config
-from dtq.agents import demo, executor, scripted
+from dtq.agents import demo, executor, llm, scripted
 from dtq.agents.history import prompt_sha256
 from dtq.agents.models import AgentStep, RunStatus, StepKind, StepStatus
 from dtq.agents.tools import ToolError
@@ -445,3 +445,72 @@ def test_demo_notification_is_sent_at_most_once_despite_a_crash_and_redelivery(c
     else:
         assert sink_rows(f"{run_id}:3") == 0
         assert_paused_on_unknown_outcome(run_id, 3, "send_notification")
+
+
+class Queued:
+    """A provider that returns queued responses (or raises queued errors) in order,
+    recording every request."""
+
+    def __init__(self):
+        self.replies, self.requests = [], []
+
+    def complete(self, request):
+        self.requests.append(request)
+        reply = self.replies.pop(0)
+        if isinstance(reply, Exception):
+            raise reply
+        return reply
+
+
+QUEUED = Queued()
+llm.register_provider("queued", QUEUED)
+
+
+def start_queued_run(client, **model) -> str:
+    QUEUED.requests.clear()
+    resp = client.post("/runs", json={"goal": "g", "model": {"provider": "queued", "name": "q", **model},
+                                      "tools": ["lookup"]})
+    assert resp.status_code == 202, resp.text
+    return resp.json()["id"]
+
+
+def test_usage_from_a_fallback_model_is_priced_at_that_models_rates(client, make_worker, monkeypatch):
+    monkeypatch.setitem(llm.PRICES, "q", (4.0, 20.0))
+    monkeypatch.setitem(llm.PRICES, "q-fallback", (5.0, 25.0))
+    QUEUED.replies = [llm.LLMResponse(text="done", input_tokens=150, output_tokens=15,
+                                      usage_by_model=[("q", 100, 0), ("q-fallback", 50, 15)])]
+    run_id = start_queued_run(client)
+    drain(make_worker())
+
+    run = get_run(run_id)
+    assert (run.status, run.input_tokens, run.output_tokens) == (RunStatus.SUCCEEDED, 150, 15)
+    assert run.cost_micros == 100 * 4 + (50 * 5 + 15 * 25)
+
+
+def test_a_call_that_failed_for_good_still_counts_its_usage(client, make_worker, monkeypatch):
+    monkeypatch.setitem(llm.PRICES, "q", (4.0, 20.0))
+    QUEUED.replies = [llm.ProviderError("cut off at max_output_tokens", retryable=False,
+                                        usage_by_model=[("q", 300, 16000)])]
+    run_id = start_queued_run(client)
+    drain(make_worker())
+
+    run = get_run(run_id)
+    assert (run.status, run.error) == (RunStatus.FAILED, "step 0: cut off at max_output_tokens")
+    assert (run.llm_calls, run.input_tokens, run.output_tokens, run.cost_micros) == (1, 300, 16000, 300 * 4 + 16000 * 20)
+    assert get_steps(run_id)[0].output_tokens == 16000
+
+
+def test_provider_content_and_effort_reach_the_provider(client, make_worker):
+    raw = {"provider": "queued", "content": [{"type": "thinking", "signature": "sig"}, {"type": "tool_use"}]}
+    QUEUED.replies = [
+        llm.LLMResponse(tool_calls=[llm.ToolCall("t1", "lookup", {"key": "a"})], provider_content=raw),
+        llm.LLMResponse(text="done"),
+    ]
+    run_id = start_queued_run(client, effort="high")
+    drain(make_worker())
+
+    assert get_run(run_id).status == RunStatus.SUCCEEDED
+    assert [r.effort for r in QUEUED.requests] == ["high", "high"]
+    assistant = QUEUED.requests[1].messages[1]
+    assert assistant["provider_content"] == raw  # replayed exactly as recorded
+    assert get_steps(run_id)[0].output["provider_content"] == raw

@@ -204,15 +204,21 @@ def _call_llm(run: AgentRun, step: AgentStep, messages: list) -> Outcome:
         tools=[llm.ToolSpec(t.name, t.description, t.parameters) for name in run.tools if (t := tools.get(name))],
         max_output_tokens=budgets.max_output_tokens(run),
         idempotency_key=f"{run.id}:{step.step_no}",
+        effort=run.model.get("effort"),
     )
     try:
         response = provider.complete(request)
     except llm.ProviderError as exc:
         if exc.retryable:
             raise
-        return Outcome(StepStatus.FAILED, {"error": str(exc)})
+        # A call that failed for good can still have used tokens (a response cut off
+        # at its limit), and they count toward the run's usage and budgets.
+        usage = exc.usage_by_model
+        return Outcome(StepStatus.FAILED, {"error": str(exc)}, sum(u[1] for u in usage), sum(u[2] for u in usage),
+                       llm.cost_of(usage))
+    usage = response.usage_by_model or [(run.model["name"], response.input_tokens, response.output_tokens)]
     return Outcome(StepStatus.SUCCEEDED, response.to_output(), response.input_tokens, response.output_tokens,
-                   llm.cost_micros(run.model["name"], response.input_tokens, response.output_tokens))
+                   llm.cost_of(usage))
 
 
 def _run_tool(run: AgentRun, name: str) -> tools.Tool | None:
