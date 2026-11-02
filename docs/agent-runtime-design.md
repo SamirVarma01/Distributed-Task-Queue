@@ -259,6 +259,7 @@ An approval is a step of kind `approval`. It is how a person's decision enters t
   - Steps already executing finish and record their output and usage, but schedule nothing.
   - Messages already queued find the run cancelled at A and do nothing.
   - So a cancel takes effect at the next step boundary, and never interrupts a tool mid-call.
+  - Approval steps still waiting stay `waiting`. The run is terminal, so they can no longer be decided (409).
 - **Races** between approve, reject and cancel, or a double approve, are settled by locking. Each decision is one transaction that first locks the run row and checks the run is `awaiting_approval`, then checks the step is still `waiting`. The first to commit wins, and the others get a 409. The step check matters when another approval step keeps the run paused, because only it stops a second approval of the same step.
 - **Errors:** an unknown run is a 404. A run not awaiting approval, or a step that isn't waiting, is a 409. `tool_output` for anything but an unknown outcome is a 400.
 
