@@ -5,7 +5,6 @@ from sqlalchemy import func, select, update
 from dtq.agents import executor
 from dtq.agents.models import AgentRun, RunStatus
 from dtq.agents.states import ALLOWED_FROM, TERMINAL
-from dtq.agents.tools import tool
 from dtq.db import SessionLocal, TaskStatus
 
 from .conftest import get_task
@@ -126,15 +125,3 @@ def test_cancel_a_finished_run_is_a_conflict(client, submit_run, status):
     assert resp.status_code == 409
     assert status.value in resp.json()["detail"]
     assert client.get(f"/runs/{run_id}").json()["status"] == status.value
-
-
-@tool(effect="side_effect", requires_approval=True)
-def wire_money(amount: int) -> None:
-    """Move money. Needs a person's approval."""
-
-
-def test_submit_refuses_tools_that_require_approval_until_phase_4(client):
-    resp = client.post("/runs", json={"goal": "g", "model": MODEL, "tools": ["echo", "wire_money"]})
-
-    assert resp.status_code == 400
-    assert "['wire_money'] require approval" in resp.json()["detail"]

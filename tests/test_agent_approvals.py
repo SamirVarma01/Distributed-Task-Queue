@@ -3,12 +3,14 @@ from datetime import timedelta
 import pytest
 from sqlalchemy import update
 
+from dtq.agents import scripted
 from dtq.agents.models import AgentRun, RunStatus, StepKind, StepStatus
+from dtq.agents.tools import tool
 from dtq.db import SessionLocal, utcnow
 
 from .agent_support import (  # noqa: F401  (agent_env is an autouse fixture)
-    SPY, Crash, agent_env, assert_paused_on_unknown_outcome, drain, effects, faults, get_run, get_steps,
-    reclaim_immediately, start_side_effect_run)
+    SPY, Crash, agent_env, assert_paused_on_unknown_outcome, drain, effects, faults, get_run, get_steps, looked_up,
+    reclaim_immediately, start_run, start_side_effect_run, summary)
 
 
 def pause_on_unknown_charge(client, make_worker, monkeypatch, point: str = "before"):
@@ -195,3 +197,104 @@ def test_a_step_is_decided_once_even_while_others_keep_the_run_paused(client, ma
     assert (resp.status_code, resp.json()["detail"]) == (409, f"step {first} isn't waiting for a decision")
     retries = [s for s in get_steps(run_id) if s.kind == StepKind.TOOL and s.call_id == "call_0_0"][1:]
     assert len(retries) == 1
+
+
+
+@tool(effect="side_effect", requires_approval=True)
+def delete_account(user: str, *, idempotency_key: str) -> dict:
+    """Delete an account. A person must approve each call."""
+    effects.append(("delete_account", idempotency_key))
+    return {"deleted": user}
+
+
+scripted.script("needs-approval", [
+    scripted.call_tools(("lookup", {"key": "a"}), ("delete_account", {"user": "u1"}), ("lookup", {"key": "b"})),
+    scripted.call_tools(("delete_account", {"user": "u2"})),
+    scripted.answer("deleted u1 and u2"),
+])
+
+
+def start_gated_run(client) -> str:
+    return start_run(client, script="needs-approval", tools=("lookup", "delete_account"))
+
+
+def test_a_turn_with_a_call_needing_approval_waits_before_any_of_its_calls(client, make_worker):
+    run_id = start_gated_run(client)
+    drain(make_worker())
+
+    run = get_run(run_id)
+    assert (run.status, run.calls_remaining) == (RunStatus.AWAITING_APPROVAL, 0)
+    assert summary(get_steps(run_id)) == [(0, "llm", 0, "succeeded"), (1, "approval", 0, "waiting")]
+    approval = get_steps(run_id)[1]
+    assert approval.call_id is None
+    assert approval.input == {"reason": "approval_required",
+                              "calls": [{"call_id": "call_0_1", "tool": "delete_account", "args": {"user": "u1"}}]}
+    assert looked_up == [] and effects == []  # not even the lookups, which don't need approval
+
+
+def test_approving_runs_the_turn_and_each_turn_asks_again(client, make_worker):
+    run_id = start_gated_run(client)
+    worker = make_worker()
+    drain(worker)
+
+    assert decide(client, run_id, "approve", step_no=1).status_code == 200
+    assert summary(get_steps(run_id))[2:] == [(2, "tool", 0, "pending"), (3, "tool", 0, "pending"),
+                                              (4, "tool", 0, "pending")]
+    drain(worker)
+    assert summary(get_steps(run_id))[5:] == [(5, "llm", 5, "succeeded"), (6, "approval", 5, "waiting")]
+
+    decide(client, run_id, "approve", step_no=6)
+    drain(worker)
+    assert get_run(run_id).status == RunStatus.SUCCEEDED
+    assert looked_up == ["a", "b"]
+    assert effects == [("delete_account", f"{run_id}:3"), ("delete_account", f"{run_id}:7")]
+    assert tool_results(SPY.requests[1]) == {"call_0_0": ("value of a", False),
+                                             "call_0_1": ({"deleted": "u1"}, False), "call_0_2": ("value of b", False)}
+
+
+def test_rejecting_a_turn_runs_none_of_its_calls(client, make_worker):
+    run_id = start_gated_run(client)
+    worker = make_worker()
+    drain(worker)
+
+    assert decide(client, run_id, "reject", step_no=1).status_code == 200
+    drain(worker)
+
+    assert get_run(run_id).status == RunStatus.FAILED
+    assert looked_up == [] and effects == []
+
+
+def test_tool_output_only_applies_to_unknown_outcomes(client, make_worker):
+    run_id = start_gated_run(client)
+    drain(make_worker())
+
+    resp = decide(client, run_id, "approve", step_no=1, tool_output={"deleted": "u1"})
+
+    assert (resp.status_code, resp.json()["detail"]) == (400, "tool_output only applies to a call whose outcome is unknown")
+    assert get_steps(run_id)[1].status == StepStatus.WAITING
+
+
+def test_cancelling_a_run_awaiting_approval(client, make_worker):
+    run_id = start_gated_run(client)
+    worker = make_worker()
+    drain(worker)
+
+    assert client.post(f"/runs/{run_id}/cancel").status_code == 200
+    assert decide(client, run_id, "approve", step_no=1).status_code == 409
+    drain(worker)
+    assert get_run(run_id).status == RunStatus.CANCELLED
+    assert looked_up == [] and effects == []
+
+
+def test_cancel_during_the_llm_call_asks_for_no_approval(client, make_worker):
+    run_id = start_gated_run(client)
+
+    def cancel(request):
+        SPY.before = None
+        client.post(f"/runs/{run_id}/cancel")
+
+    SPY.before = cancel
+    drain(make_worker())
+
+    assert get_run(run_id).status == RunStatus.CANCELLED
+    assert summary(get_steps(run_id)) == [(0, "llm", 0, "succeeded")]

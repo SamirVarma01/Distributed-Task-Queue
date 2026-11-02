@@ -215,11 +215,13 @@ def _call_llm(run: AgentRun, step: AgentStep, messages: list) -> Outcome:
                    llm.cost_micros(run.model["name"], response.input_tokens, response.output_tokens))
 
 
+def _run_tool(run: AgentRun, name: str) -> tools.Tool | None:
+    """The tool called name, or None if it isn't one of the run's tools."""
+    return tools.get(name) if name in run.tools else None
+
+
 def _tool_for(run: AgentRun, step: AgentStep) -> tools.Tool | None:
-    """The tool a tool step calls, or None if it isn't one of the run's tools."""
-    if step.kind != StepKind.TOOL or step.input["tool"] not in run.tools:
-        return None
-    return tools.get(step.input["tool"])
+    return _run_tool(run, step.input["tool"]) if step.kind == StepKind.TOOL else None
 
 
 def _call_tool(run: AgentRun, step: AgentStep, took_over: bool) -> Outcome:
@@ -238,8 +240,6 @@ def _call_tool(run: AgentRun, step: AgentStep, took_over: bool) -> Outcome:
         kwargs = tools.bind_args(t, args, step.idempotency_key)
     except TypeError as exc:
         return Outcome(StepStatus.FAILED, {"error": f"bad arguments for {name!r}: {exc}"})
-    if t.requires_approval:  # POST /runs refuses these until approvals exist (Phase 4)
-        return Outcome(StepStatus.FAILED, {"error": f"{name!r} requires approval, which isn't supported yet"})
     if took_over and t.effect is Effect.SIDE_EFFECT:
         return _check(t, step, INTERRUPTED)
     try:
@@ -281,18 +281,21 @@ def _json_safe(result: Any) -> Any:
     return result
 
 
-def _pause_for_unknown_outcome(s, run_id: str, step: AgentStep) -> None:
-    """Ask a person about a side-effecting call whose outcome is unknown: add a waiting
-    approval step for it, and pause the run. The caller holds the run row's lock. The
-    turn's other calls keep running; the next turn waits, because this call has no
-    result."""
+def _ask_for_approval(s, run_id: str, turn: int, input: dict[str, Any], call_id: str | None = None) -> None:
+    """Add a waiting approval step, and pause the run if it is running. The caller holds
+    the run row's lock. A person decides through POST /runs/{id}/approve or /reject."""
     n = allocate_steps(s, run_id, 1)
-    s.add(AgentStep(run_id=run_id, step_no=n, turn=step.turn, kind=StepKind.APPROVAL, status=StepStatus.WAITING,
-                    call_id=step.call_id,
-                    input={"reason": "unknown_outcome", "step_no": step.step_no,
-                           "calls": [{"call_id": step.call_id, "tool": step.input["tool"],
-                                      "args": step.input["args"]}]}))
+    s.add(AgentStep(run_id=run_id, step_no=n, turn=turn, kind=StepKind.APPROVAL, status=StepStatus.WAITING,
+                    call_id=call_id, input=input))
     transition(s, run_id, RunStatus.RUNNING, RunStatus.AWAITING_APPROVAL, paused_at=utcnow())
+
+
+def _pause_for_unknown_outcome(s, run_id: str, step: AgentStep) -> None:
+    """Ask a person about a side-effecting call whose outcome is unknown. The turn's
+    other calls keep running; the next turn waits, because this call has no result."""
+    _ask_for_approval(s, run_id, step.turn, call_id=step.call_id, input={
+        "reason": "unknown_outcome", "step_no": step.step_no,
+        "calls": [{"call_id": step.call_id, "tool": step.input["tool"], "args": step.input["args"]}]})
 
 
 def _record(run: AgentRun, step: AgentStep, attempt: int, outcome: Outcome) -> list[Task] | None:
@@ -342,7 +345,21 @@ def _after_llm(s, run: AgentRun, step: AgentStep, outcome: Outcome) -> list[Task
     if not calls:
         transition(s, run.id, RunStatus.RUNNING, RunStatus.SUCCEEDED, result=outcome.output["text"])
         return []
-    return schedule_tools(s, run, step.turn, calls)
+    gated = [c for c in calls if (t := _run_tool(run, c["name"])) and t.requires_approval]
+    if not gated:
+        return schedule_tools(s, run, step.turn, calls)
+    # One approval for the turn, listing the calls that need it. None of the turn's
+    # calls run until it is approved: approving schedules them all.
+    pausing = s.execute(
+        update(AgentRun)
+        .where(AgentRun.id == run.id, AgentRun.turn == step.turn, AgentRun.status == RunStatus.RUNNING)
+        .values(turn=AgentRun.turn)
+    )
+    if pausing.rowcount:
+        _ask_for_approval(s, run.id, step.turn, input={
+            "reason": "approval_required",
+            "calls": [{"call_id": c["id"], "tool": c["name"], "args": c["args"]} for c in gated]})
+    return []
 
 
 def schedule_tools(s, run: AgentRun, turn: int, calls: list[dict[str, Any]]) -> list[Task]:
