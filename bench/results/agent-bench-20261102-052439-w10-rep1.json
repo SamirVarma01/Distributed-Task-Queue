@@ -1,0 +1,50 @@
+{
+  "label": "agent-bench-20261102-052439-w10-rep1",
+  "date": "2026-11-02T05:29:36+00:00",
+  "settings": {
+    "workers": 10,
+    "runs": 500,
+    "sequential_runs": 30
+  },
+  "environment": {
+    "commit": "3200dfd",
+    "uncommitted_changes": false,
+    "host": "macOS-26.2-arm64-arm-64bit-Mach-O",
+    "cpu": "Apple M2",
+    "docker_cpus": 8,
+    "docker_mem_gib": 3.8,
+    "docker_version": "29.1.3",
+    "power": "Battery Power (52%)"
+  },
+  "sequential": {
+    "runs": 30,
+    "succeeded": 30,
+    "steps": 150,
+    "step_overhead_ms": {
+      "p50": 6.3,
+      "p95": 20.6,
+      "p99": 38.1,
+      "max": 39.5
+    },
+    "run_ms": {
+      "p50": 38.8,
+      "p95": 114.6,
+      "p99": 164.5,
+      "max": 164.5
+    }
+  },
+  "burst": {
+    "runs": 500,
+    "succeeded": 500,
+    "steps": 3000,
+    "seconds": 8.97,
+    "runs_per_second": 55.7,
+    "steps_per_second": 334.5,
+    "step_latency_ms": {
+      "p50": 1455.9,
+      "p95": 2046.8,
+      "p99": 2060.3,
+      "max": 2078.3
+    }
+  }
+}
