@@ -1,4 +1,3 @@
-import json
 import logging
 import os
 import random
@@ -15,6 +14,7 @@ from . import config, registry, tasks  # noqa: F401  (tasks import registers the
 from .agents import demo, executor  # noqa: F401  (register agent_step and the demo tools)
 from .broker import Broker
 from .db import SessionLocal, Task, TaskStatus, utcnow, wait_for_db
+from .runner import TaskFailed, TaskProcess, json_safe
 
 log = logging.getLogger("dtq.worker")
 
@@ -45,6 +45,7 @@ class Worker:
     def __init__(self):
         self.id = f"{socket.gethostname()}-{os.getpid()}"
         self.broker = Broker()
+        self.task_process = TaskProcess()  # runs tasks that have a timeout; started when first needed
         self.queues = config.QUEUES
         self.stopping = False
         self._last_reclaim = 0.0
@@ -58,14 +59,17 @@ class Worker:
             self.broker.ensure_group(q)
         log.info("worker %s consuming %s", self.id, self.queues)
 
-        while not self.stopping:
-            try:
-                self.step(block_ms=config.READ_BLOCK_MS)
-            except Exception:
-                # MySQL or Redis is unavailable. Any message we held stays unacked and
-                # is reclaimed once the outage is over, so back off and keep going.
-                log.exception("worker loop failed; retrying in %.0fs", config.ERROR_BACKOFF_SECONDS)
-                time.sleep(config.ERROR_BACKOFF_SECONDS)
+        try:
+            while not self.stopping:
+                try:
+                    self.step(block_ms=config.READ_BLOCK_MS)
+                except Exception:
+                    # MySQL or Redis is unavailable. Any message we held stays unacked and
+                    # is reclaimed once the outage is over, so back off and keep going.
+                    log.exception("worker loop failed; retrying in %.0fs", config.ERROR_BACKOFF_SECONDS)
+                    time.sleep(config.ERROR_BACKOFF_SECONDS)
+        finally:
+            self.task_process.stop()
         log.info("worker %s stopped", self.id)
 
     def step(self, block_ms: int = 0) -> bool:
@@ -165,23 +169,28 @@ class Worker:
         if task.attempts > task.max_retries + 1:
             return self._finish(task, TaskStatus.DEAD, error="exceeded max attempts (worker crashes)")
 
+        timeout = registry.timeout(task.name)
+        if timeout is not None:
+            # Outside the try below: a child process that can't start is the worker's
+            # problem, not the task's. The exception leaves the message pending, and it
+            # is reclaimed as after a crash.
+            self.task_process.wait_ready()
+
         log.info("running %s %s (attempt %d)", task.name, task.id, task.attempts)
         try:
-            result = self._call(fn, task)
+            result = self._call(fn, task, timeout)
+        except TaskFailed as exc:  # in the child process: raised, timed out, or died
+            self._on_failure(task, str(exc))
         except Exception:
             self._on_failure(task, traceback.format_exc())
         else:
-            # MySQL's JSON type rejects NaN and Infinity, which json.dumps accepts by
-            # default; such a result could never be saved, so store its repr instead.
-            try:
-                json.dumps(result, allow_nan=False)
-            except (TypeError, ValueError):
-                result = repr(result)
-            self._finish(task, TaskStatus.SUCCEEDED, result=result)
+            self._finish(task, TaskStatus.SUCCEEDED, result=json_safe(result))
 
-    @staticmethod
-    def _call(fn, task: Task):
-        token = registry.current_task.set(registry.TaskContext(task.id, task.attempts))
+    def _call(self, fn, task: Task, timeout: float | None):
+        context = registry.TaskContext(task.id, task.attempts)
+        if timeout is not None:
+            return self.task_process.call(fn, task.payload, context, timeout)
+        token = registry.current_task.set(context)
         try:
             return fn(**task.payload)
         finally:

@@ -23,5 +23,9 @@ READ_BLOCK_MS = int(os.getenv("READ_BLOCK_MS", "100"))
 # How long a worker backs off after an infrastructure error (MySQL or Redis down).
 ERROR_BACKOFF_SECONDS = float(os.getenv("ERROR_BACKOFF_SECONDS", "2"))
 
+# How long an attempt of a task without its own @task(timeout=...) may run before the
+# worker kills it and counts it as failed. Unset or 0: no timeout.
+DEFAULT_TASK_TIMEOUT_SECONDS = float(os.getenv("DEFAULT_TASK_TIMEOUT_SECONDS") or 0) or None
+
 RETRY_BACKOFF_BASE_SECONDS = float(os.getenv("RETRY_BACKOFF_BASE_SECONDS", "2"))
 RETRY_BACKOFF_MAX_SECONDS = float(os.getenv("RETRY_BACKOFF_MAX_SECONDS", "300"))

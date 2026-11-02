@@ -11,6 +11,9 @@ import redis
 
 os.environ["MYSQL_URL"] = f"sqlite:///{tempfile.mkdtemp()}/dtq-test.db"
 os.environ["QUEUES"] = "high,default,low"
+# A task with a timeout runs in a child process, which can't see fakeredis. Only the
+# timeout tests' own tasks have one.
+os.environ.pop("DEFAULT_TASK_TIMEOUT_SECONDS", None)
 
 FAKE_REDIS = fakeredis.FakeServer()
 # Every Broker connects through Redis.from_url; point it at the shared fake server.
