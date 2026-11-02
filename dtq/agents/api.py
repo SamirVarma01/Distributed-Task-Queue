@@ -99,6 +99,8 @@ def submit_run(body: SubmitRun):
     unknown = [name for name in body.tools if tools.get(name) is None]
     if unknown:
         raise HTTPException(400, f"unknown tools {unknown}; available: {tools.names()}")
+    if body.max_cost_micros is not None and body.model.name not in llm.PRICES:
+        raise HTTPException(400, f"model {body.model.name!r} has no price, so a cost budget can't be enforced")
     gated = [name for name in body.tools if tools.get(name).requires_approval]
     if gated:
         raise HTTPException(400, f"tools {gated} require approval, which agent runtime Phase 4 adds")

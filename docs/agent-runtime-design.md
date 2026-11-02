@@ -272,7 +272,11 @@ The budgets are checked in A of every LLM step, before the call, against the run
 | `max_cost_micros` | `cost_micros >= max_cost_micros` |
 | `max_wall_seconds` | `now - started_at - paused_seconds >= max_wall_seconds` |
 
-Exceeding any of them moves the run to `budget_exceeded`, with the budget named in `error`. `max_steps` counts LLM calls, that is, turns. Time spent awaiting approval doesn't count toward wall time. Cost is tokens multiplied by per-model prices from a table in config. For the ScriptedLLM, tests set the prices.
+Exceeding any of them moves the run to `budget_exceeded`, with the budget and its usage named in `error`. The LLM step that would have run is recorded as `failed`, with "not run" and the same reason.
+
+- `max_steps` counts LLM calls, that is, turns.
+- Time spent awaiting approval doesn't count toward wall time, including the current pause.
+- Cost is tokens multiplied by per-model prices from a table in config (`dtq.agents.llm.PRICES`). A model with no price costs 0, so `POST /runs` refuses a cost budget for one. For the ScriptedLLM, tests set the prices.
 
 The limits of this:
 

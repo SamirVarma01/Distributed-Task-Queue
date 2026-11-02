@@ -22,7 +22,7 @@ from sqlalchemy import select, update
 from .. import registry
 from ..broker import Broker
 from ..db import SessionLocal, Task, utcnow
-from . import llm, scripted, tools  # noqa: F401  (scripted registers its provider)
+from . import budgets, llm, scripted, tools  # noqa: F401  (scripted registers its provider)
 from .history import build_messages, prompt_sha256
 from .models import AgentRun, AgentStep, RunStatus, StepKind, StepStatus
 from .states import ALLOWED_FROM, transition
@@ -165,6 +165,12 @@ def _begin(run_id: str, step_no: int, attempt: int) -> tuple[AgentRun, AgentStep
 
         if step.kind != StepKind.LLM:
             return run, step, None, took_over
+        over = budgets.exceeded(run, utcnow())
+        if over:
+            s.execute(update(AgentStep).where(*this_step, AgentStep.attempt == attempt).values(
+                status=StepStatus.FAILED, output={"error": f"not run: budget exceeded ({over})"}, finished_at=utcnow()))
+            transition(s, run_id, RunStatus.RUNNING, RunStatus.BUDGET_EXCEEDED, error=f"budget exceeded: {over}")
+            return f"budget exceeded: {over}"
         steps = s.scalars(select(AgentStep).where(AgentStep.run_id == run_id)).all()
         messages = build_messages(run.goal, steps)
         s.execute(
@@ -186,7 +192,7 @@ def _call_llm(run: AgentRun, step: AgentStep, messages: list) -> Outcome:
         system=run.model["system"],
         messages=messages,
         tools=[llm.ToolSpec(t.name, t.description, t.parameters) for name in run.tools if (t := tools.get(name))],
-        max_output_tokens=run.model["max_output_tokens"],
+        max_output_tokens=budgets.max_output_tokens(run),
         idempotency_key=f"{run.id}:{step.step_no}",
     )
     try:
