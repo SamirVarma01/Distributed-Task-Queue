@@ -45,10 +45,10 @@ from sqlalchemy import bindparam, create_engine, text
 ROOT = Path(__file__).resolve().parent.parent
 RESULTS = ROOT / "bench" / "results"
 SUMMARY_HEADER = (
-    "| label | mode | task | workers | tasks | rate target / achieved (tasks/s) | wall (s) "
+    "| label | mode | task | workers | slots per worker | tasks | rate target / achieved (tasks/s) | wall (s) "
     "| throughput (tasks/s) | latency p50 / p95 / p99 (ms) | queue wait p50 / p95 (ms) | run p50 (ms) "
     "| not succeeded | commit |\n"
-    "|---|---|---|---|---|---|---|---|---|---|---|---|---|\n"
+    "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n"
 )
 
 COMPOSE_SETTINGS = ("WORKER_CONCURRENCY", "DEFAULT_TASK_TIMEOUT_SECONDS", "MYSQL_FLUSH_LOG_AT_TRX_COMMIT", "REDIS_APPENDFSYNC")
@@ -71,6 +71,8 @@ def parse_args():
     p.add_argument("--sleep-ms", type=int, default=10, help="duration of each sleep_ms task (default 10)")
     p.add_argument("--label", help="result name (default: <task>-<workers>w[-r<rate>]-<timestamp>)")
     p.add_argument("--workers", type=int, help="worker count to record (default: counted with docker compose ps)")
+    p.add_argument("--slots", type=int,
+                   help="slots per worker to record (default: WORKER_CONCURRENCY read from a worker container)")
     p.add_argument("--warmup", type=int, default=200, help="unmeasured tasks run first (default 200)")
     p.add_argument("--batch-size", type=int, default=500, help="burst mode: tasks per request")
     p.add_argument("--concurrency", type=int, default=8, help="requests in flight at once")
@@ -90,6 +92,12 @@ def run(cmd: list[str]) -> str | None:
 def count_workers() -> int | None:
     out = run(["docker", "compose", "ps", "--status", "running", "--format", "{{.Service}}"])
     return None if out is None else out.split().count("worker")
+
+
+def worker_slots() -> int | None:
+    """WORKER_CONCURRENCY as a running worker container has it; docker compose always sets it."""
+    out = run(["docker", "compose", "exec", "-T", "worker", "printenv", "WORKER_CONCURRENCY"])
+    return int(out) if out else None
 
 
 def power_source() -> str | None:
@@ -229,11 +237,12 @@ def summary_row(result: dict) -> str:
     if mode == "rate":
         rate = f"{result['rate']['target']:.0f} / {result['tasks'] / m['submit_seconds']:.0f}"
     not_succeeded = result["tasks"] - m["statuses"].get("succeeded", 0)
+    slots = result.get("slots", 1)  # results from before WORKER_CONCURRENCY existed ran one task per worker
     commit = result["environment"]["commit"] or "?"
     if result["environment"]["uncommitted_changes"]:
         commit += "+changes"
     return (
-        f"| {result['label']} | {mode} | {result['task']} | {result['workers']} | {result['tasks']} | {rate} "
+        f"| {result['label']} | {mode} | {result['task']} | {result['workers']} | {slots} | {result['tasks']} | {rate} "
         f"| {m['wall_seconds']:.1f} | {m['throughput_per_second']:.0f} "
         f"| {lat['p50']:.0f} / {lat['p95']:.0f} / {lat['p99']:.0f} | {wait['p50']:.0f} / {wait['p95']:.0f} "
         f"| {m['run_ms']['p50']:.1f} | {not_succeeded} | {commit} |\n"
@@ -251,6 +260,7 @@ def write_summary() -> None:
 def main():
     args = parse_args()
     workers = args.workers if args.workers is not None else count_workers()
+    slots = args.slots if args.slots is not None else worker_slots()
     started = datetime.now(timezone.utc)
     mode = "rate" if args.rate else "burst"
     rate_suffix = f"-r{args.rate:g}" if args.rate else ""
@@ -265,11 +275,12 @@ def main():
 
     lags = None
     if mode == "rate":
-        print(f"submitting {args.rate:g} {args.task} tasks/s for {args.duration:g}s to {workers} workers")
+        print(f"submitting {args.rate:g} {args.task} tasks/s for {args.duration:g}s to {workers} workers "
+              f"with {slots} slots each")
         ids, lags = submit_at_rate(args.api, spec, args.rate, args.duration, args.tick_ms / 1000,
                                    args.concurrency)
     else:
-        print(f"submitting {args.tasks} {args.task} tasks to {workers} workers")
+        print(f"submitting {args.tasks} {args.task} tasks to {workers} workers with {slots} slots each")
         ids = submit(args.api, spec, args.tasks, args.batch_size, args.concurrency)
     wait_until_terminal(engine, ids, args.timeout)
 
@@ -281,6 +292,7 @@ def main():
         "payload": spec["payload"],
         "tasks": len(ids),
         "workers": workers,
+        "slots": slots,
         "settings": {k: getattr(args, k) for k in ("warmup", "batch_size", "concurrency")},
         "environment": environment(),
         "metrics": measure(engine, ids),

@@ -1,0 +1,54 @@
+{
+  "label": "matrix-20261102-123051-w1-c1-rep3",
+  "date": "2026-11-02T17:39:30+00:00",
+  "mode": "burst",
+  "task": "noop",
+  "payload": {},
+  "tasks": 10000,
+  "workers": 1,
+  "slots": 1,
+  "settings": {
+    "warmup": 200,
+    "batch_size": 500,
+    "concurrency": 8
+  },
+  "environment": {
+    "commit": "71f33e4",
+    "uncommitted_changes": false,
+    "host": "macOS-26.2-arm64-arm-64bit-Mach-O",
+    "cpu": "Apple M2",
+    "docker_cpus": 8,
+    "docker_mem_gib": 3.8,
+    "docker_version": "29.1.3",
+    "power": "Battery Power (56%)",
+    "compose_env": {
+      "WORKER_CONCURRENCY": "1"
+    }
+  },
+  "metrics": {
+    "statuses": {
+      "succeeded": 10000
+    },
+    "wall_seconds": 44.398,
+    "throughput_per_second": 225.2,
+    "submit_seconds": 2.645,
+    "latency_ms": {
+      "p50": 20807.9,
+      "p95": 39679.4,
+      "p99": 41467.5,
+      "max": 41753.5
+    },
+    "queue_wait_ms": {
+      "p50": 20806.9,
+      "p95": 39678.3,
+      "p99": 41466.6,
+      "max": 41752.4
+    },
+    "run_ms": {
+      "p50": 1.0,
+      "p95": 2.3,
+      "p99": 4.7,
+      "max": 1569.7
+    }
+  }
+}
