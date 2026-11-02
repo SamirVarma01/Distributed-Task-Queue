@@ -22,7 +22,10 @@ class ModelConfig(BaseModel):
     provider: str
     name: str
     system: str = ""
-    max_output_tokens: int = Field(1024, ge=1)
+    # Includes thinking tokens on models that think, so leave room: a response cut off
+    # at the limit fails the run.
+    max_output_tokens: int = Field(16000, ge=1)
+    effort: str | None = Field(None, max_length=16)  # e.g. "low"..."max"; None is the model's default
 
 
 class SubmitRun(BaseModel):

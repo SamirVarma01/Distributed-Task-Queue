@@ -298,8 +298,9 @@ class LLMRequest:
     system: str
     messages: list[Message]   # provider-neutral: role plus text, tool calls or tool results
     tools: list[ToolSpec]     # name, description, JSON schema from the type hints
-    max_output_tokens: int
+    max_output_tokens: int    # default 16000: on models that think, thinking counts toward it
     idempotency_key: str      # "<run_id>:<step_no>"
+    effort: str | None        # from the run's model config; None is the model's default
 
 @dataclass
 class LLMResponse:
@@ -308,6 +309,8 @@ class LLMResponse:
     stop_reason: str
     input_tokens: int
     output_tokens: int
+    usage_by_model: list[tuple[str, int, int]] | None  # when more than one model served the call
+    provider_content: dict | None  # the provider's own record of the turn, replayed unchanged
 ```
 
 - **Errors.** Providers are looked up by `run.model["provider"]`. They raise `ProviderError(retryable=...)`.
@@ -316,7 +319,18 @@ class LLMResponse:
 - **ScriptedLLM** is used by every test and benchmark. It returns a fixed sequence of responses, with configured token counts and an optional delay.
   - It picks each response by how many LLM turns the request's history already contains, not by an internal counter. A re-executed step may run in a different worker process and must get the same response there.
   - Scripts are registered by name, and a run selects one with `{"provider": "scripted", "name": "<script>"}`.
-- **Real adapters** (Phase 5) map this format to and from Anthropic's and/or OpenAI's tool-calling APIs, both of which can return several tool calls in one response. Env vars enable them. Tests that call them are marked `live` and skipped by default.
+- **Real adapters** (`dtq/agents/providers/`) are registered when their credentials are set: `anthropic` with `ANTHROPIC_API_KEY` (or `ANTHROPIC_AUTH_TOKEN`), and `openai` with `OPENAI_API_KEY`. Both APIs can return several tool calls in one response. Tests that call them are marked `live`, and `pytest` leaves them out unless run with `-m live`.
+  - **Anthropic** (Messages API, `client.beta.messages.create`).
+    - **Replaying turns:** each assistant turn is recorded exactly as returned (`provider_content`) and replayed unchanged, thinking blocks included. That is what the API requires of thinking blocks, and the runtime never edits earlier turns.
+    - **Refusal fallback:** models that support it run with `fallbacks: "default"`, so if the model's safety classifiers decline, the API re-runs the request on Anthropic's recommended model for that refusal category, in the same call. Usage comes per attempt from `usage.iterations`, so a fallback is priced at its own model's rates.
+    - **Failed calls:** a refusal, or a response cut off at `max_tokens`, fails the run but keeps the usage it was billed for.
+    - **Prices:** current models are priced from Anthropic's published rates (2026-10-06). Claude Haiku 5.5 is left out, because its rate is tiered by prompt size.
+  - **OpenAI** (Chat Completions).
+    - **Errors in results:** tool results have no error flag, so failed results are prefixed "Error:".
+    - **Bad arguments:** arguments that aren't a JSON object fail argument validation, and the error goes back to the model.
+    - **Prices:** no OpenAI model is priced, so these runs cost 0 and can't take a cost budget.
+  - **Retries:** for both, 429, 5xx (including Anthropic's 529), 408, 409 and connection or timeout errors are retryable. Other 4xx fail the run.
+- **`scripts/demo_agent.py`** runs an agent on a running stack, printing each step as it finishes and asking at the prompt when the run waits for approval.
 - **A future gateway** would be just another provider: an adapter that calls it over HTTP. The runtime doesn't depend on one.
   - The runtime keeps the per-run budgets. A gateway would add what a single run can't see: rate limits and spend across runs, failover between providers, and caching.
   - If the gateway returns its stored response when it sees a key again, a re-executed LLM step costs nothing and gets an identical response. That closes the undercounting gap in section 9.

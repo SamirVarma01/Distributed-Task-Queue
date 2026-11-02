@@ -68,3 +68,11 @@ def test_cost_in_micro_dollars(monkeypatch):
     assert llm.cost_micros("priced", 1000, 100) == 3000 + 1500
     assert llm.cost_micros("cheap", 3, 0) == 1  # 0.75 micro-dollars rounds up
     assert llm.cost_micros("unpriced", 1000, 1000) == 0
+
+
+def test_cost_of_usage_spread_over_models(monkeypatch):
+    monkeypatch.setitem(llm.PRICES, "big", (5.0, 25.0))
+    monkeypatch.setitem(llm.PRICES, "small", (1.0, 5.0))
+
+    assert llm.cost_of([("big", 100, 10), ("small", 1000, 100)]) == (500 + 250) + (1000 + 500)
+    assert llm.cost_of([]) == 0

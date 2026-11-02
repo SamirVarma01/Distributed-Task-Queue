@@ -23,6 +23,7 @@ from .. import registry
 from ..broker import Broker
 from ..db import SessionLocal, Task, utcnow
 from . import budgets, llm, scripted, tools  # noqa: F401  (scripted registers its provider)
+from .providers import register_configured
 from .history import build_messages, prompt_sha256
 from .models import AgentRun, AgentStep, RunStatus, StepKind, StepStatus
 from .states import ALLOWED_FROM, transition
@@ -34,6 +35,7 @@ AGENT_STEP = "agent_step"
 _NAMESPACE = uuid.uuid5(uuid.NAMESPACE_DNS, "agent-step.dtq")
 
 broker = Broker()
+register_configured()  # real LLM providers whose credentials are in the environment
 
 
 def step_task_id(run_id: str, step_no: int) -> str:
@@ -204,15 +206,21 @@ def _call_llm(run: AgentRun, step: AgentStep, messages: list) -> Outcome:
         tools=[llm.ToolSpec(t.name, t.description, t.parameters) for name in run.tools if (t := tools.get(name))],
         max_output_tokens=budgets.max_output_tokens(run),
         idempotency_key=f"{run.id}:{step.step_no}",
+        effort=run.model.get("effort"),
     )
     try:
         response = provider.complete(request)
     except llm.ProviderError as exc:
         if exc.retryable:
             raise
-        return Outcome(StepStatus.FAILED, {"error": str(exc)})
+        # A call that failed for good can still have used tokens (a response cut off
+        # at its limit), and they count toward the run's usage and budgets.
+        usage = exc.usage_by_model
+        return Outcome(StepStatus.FAILED, {"error": str(exc)}, sum(u[1] for u in usage), sum(u[2] for u in usage),
+                       llm.cost_of(usage))
+    usage = response.usage_by_model or [(run.model["name"], response.input_tokens, response.output_tokens)]
     return Outcome(StepStatus.SUCCEEDED, response.to_output(), response.input_tokens, response.output_tokens,
-                   llm.cost_micros(run.model["name"], response.input_tokens, response.output_tokens))
+                   llm.cost_of(usage))
 
 
 def _run_tool(run: AgentRun, name: str) -> tools.Tool | None:
