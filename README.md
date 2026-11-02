@@ -55,6 +55,16 @@ def resize_image(url: str, width: int) -> dict:
 
 The payload's fields are passed to it as keyword arguments. The return value must be JSON-serializable; anything else is stored as its `repr`.
 
+To limit how long each attempt may run, give the task a timeout in seconds:
+
+```python
+@task(timeout=30)
+def fetch_report(url: str) -> dict:
+    ...
+```
+
+`DEFAULT_TASK_TIMEOUT_SECONDS` gives a timeout to every task that doesn't set its own. It is unset by default, so those tasks have none, and `timeout=None` exempts a task from it. A task with a timeout runs in a child process (see [Timeouts](#how-it-behaves)), so it must be a module-level function.
+
 ## How it behaves
 
 - **One worker per message.** Each queue is a stream read through a single consumer group, so each message goes to exactly one worker.
@@ -67,6 +77,7 @@ The payload's fields are passed to it as keyword arguments. The return value mus
 - **One message at a time.** A worker reads (and reclaims) a single message and finishes it before taking another. A message it held but wasn't working on would get no heartbeat, so another worker could reclaim it and run it a second time.
 - **Ack after the result is saved.** If MySQL or Redis fails while a worker is recording a task's outcome, the message stays pending and is reclaimed once the outage is over. The worker logs the error, backs off (`ERROR_BACKOFF_SECONDS`) and keeps running.
 - **Priority.** `QUEUES=high,default,low` sets the order in which workers check the queues: a task in `low` runs only when `high` and `default` are empty. When every queue is empty, a worker waits on all of them with a blocking `XREADGROUP` (up to `READ_BLOCK_MS`, 100 ms), so a new task is picked up as soon as it arrives. That read returns one message per queue that received one. The worker keeps the highest-priority message and immediately hands the others back to the end of their streams, so it still holds only the message it is working on.
+- **Timeouts.** Python can't stop a thread from outside, so a task with a timeout runs in a child process of the worker. If an attempt overruns, the worker SIGKILLs the child and records the attempt as failed, with the error `TimeoutError: exceeded 30s`. It is retried with backoff and counts toward `max_retries`, like any other failure. The worker's heartbeat keeps running while it waits, so a long task isn't reclaimed. Each worker reuses one child for all such tasks, forked from a forkserver that imported the tasks once, so replacing a killed child is a fork rather than another import. A child that crashes (a segfault, `os._exit`) fails the attempt instead of taking the worker down. Tasks without a timeout still run in the worker process itself. Going through the child costs little: with `DEFAULT_TASK_TIMEOUT_SECONDS=60`, 10,000 `noop` tasks on one worker ran at a median of 290 tasks/s, against 291 without, and the median task's run time went from 1.0 to 1.1 ms. These are 3 alternating pairs from `scripts/ab_compare.sh`, in `bench/results/timeout-w1-*.json`, on an Apple M2 on battery power.
 - **Graceful shutdown.** On SIGTERM a worker finishes its current task before it exits (`stop_grace_period: 30s`).
 
 **Delivery is at-least-once.** A worker can crash after a task's side effects happen but before it records the result. When that happens the task runs again, so tasks should be idempotent.
@@ -98,6 +109,7 @@ The integration tests cover:
 - a duplicate message, and two workers claiming the same task at the same moment;
 - the reconciler sending a task after the API crashed between saving it and sending it;
 - a worker process killed with SIGKILL mid-task, whose message another worker process reclaims with `XAUTOCLAIM`;
+- in real worker processes with `DEFAULT_TASK_TIMEOUT_SECONDS` set, a task that overruns it, and an agent run whose steps all run in the worker's child process;
 - the parallel tool calls of 30 agent runs on four workers. SQLite locks the whole database on every write, so only here do they really race.
 
 GitHub Actions (`.github/workflows/ci.yml`) runs the unit tests on every push and the integration tests on pull requests and pushes to main.
@@ -233,7 +245,6 @@ From `bench/results/agent-bench-20261102-052439-*.json`, at commit `3200dfd`, on
 
 ## Possible next steps
 
-- Per-task timeouts (run tasks in a subprocess and kill it when time runs out).
 - Several tasks running at once in each worker process (a thread or process pool).
 - Prometheus metrics and a dashboard.
 - Agent runtime: prompt caching for Anthropic runs, prices for OpenAI models, and recorded results of the live provider tests.
