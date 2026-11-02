@@ -8,6 +8,9 @@ x-app: &app
     # that runs docker compose (dtq/agents/providers).
     ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
     OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    # Seconds a task may run per attempt unless it sets @task(timeout=...); unset means
+    # no limit. Tasks with a timeout run in each worker's child process (dtq/runner.py).
+    DEFAULT_TASK_TIMEOUT_SECONDS: ${DEFAULT_TASK_TIMEOUT_SECONDS:-}
     # Simulated latency of the demo send_notification tool, for scripts/agent_chaos.py.
     DEMO_NOTIFICATION_LATENCY_MS: ${DEMO_NOTIFICATION_LATENCY_MS:-0}
   depends_on:

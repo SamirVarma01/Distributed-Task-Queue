@@ -33,8 +33,8 @@ def group(items: list[tuple[str, dict]], suffix: str) -> dict[str, list[dict]]:
 def results_table(prefixes: list[str]) -> str:
     items = [(p.stem, json.loads(p.read_text())) for prefix in prefixes for p in RESULTS.glob(f"{prefix}*.json")]
     rows = ["| runs | mode | workers | rate (tasks/s) | throughput (tasks/s) | latency p50 (ms) | latency p95 (ms) "
-            "| latency p99 (ms) | p95 range (ms) | submit lag p99 (ms) |",
-            "|---|---|---|---|---|---|---|---|---|---|"]
+            "| latency p99 (ms) | p95 range (ms) | run p50 / p95 (ms) | submit lag p99 (ms) |",
+            "|---|---|---|---|---|---|---|---|---|---|---|"]
     for label, runs in group(items, r"-rep\d+").items():
         m = [r["metrics"] for r in runs]
         p95 = [x["latency_ms"]["p95"] for x in m]
@@ -45,6 +45,7 @@ def results_table(prefixes: list[str]) -> str:
             f"| {median(x['throughput_per_second'] for x in m):.0f} "
             f"| {median(x['latency_ms']['p50'] for x in m):.0f} | {median(p95):.0f} "
             f"| {median(x['latency_ms']['p99'] for x in m):.0f} | {min(p95):.0f}–{max(p95):.0f} "
+            f"| {median(x['run_ms']['p50'] for x in m):.1f} / {median(x['run_ms']['p95'] for x in m):.1f} "
             f"| {f'{median(lag):.1f}' if lag else '–'} |")
     return "\n".join(rows)
 

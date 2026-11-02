@@ -1,0 +1,53 @@
+{
+  "label": "timeout-w1-b-rep1",
+  "date": "2026-11-02T14:37:06+00:00",
+  "mode": "burst",
+  "task": "noop",
+  "payload": {},
+  "tasks": 10000,
+  "workers": 1,
+  "settings": {
+    "warmup": 200,
+    "batch_size": 500,
+    "concurrency": 8
+  },
+  "environment": {
+    "commit": "9a20766",
+    "uncommitted_changes": false,
+    "host": "macOS-26.2-arm64-arm-64bit-Mach-O",
+    "cpu": "Apple M2",
+    "docker_cpus": 8,
+    "docker_mem_gib": 3.8,
+    "docker_version": "29.1.3",
+    "power": "Battery Power (95%)",
+    "compose_env": {
+      "DEFAULT_TASK_TIMEOUT_SECONDS": "60"
+    }
+  },
+  "metrics": {
+    "statuses": {
+      "succeeded": 10000
+    },
+    "wall_seconds": 34.454,
+    "throughput_per_second": 290.2,
+    "submit_seconds": 1.587,
+    "latency_ms": {
+      "p50": 16142.5,
+      "p95": 31107.0,
+      "p99": 32571.8,
+      "max": 32866.7
+    },
+    "queue_wait_ms": {
+      "p50": 16141.0,
+      "p95": 31105.7,
+      "p99": 32570.3,
+      "max": 32865.7
+    },
+    "run_ms": {
+      "p50": 1.1,
+      "p95": 1.8,
+      "p99": 3.0,
+      "max": 85.1
+    }
+  }
+}
