@@ -7,6 +7,9 @@
 #   WORKER_COUNTS=10 RATES="430 687" scripts/run_bench_matrix.sh --duration 60
 #   REPEATS=5 WORKER_COUNTS=10 RATES=430 scripts/run_bench_matrix.sh   # medians via bench_report.py
 #
+# With REPEATS > 1 the worker counts take turns, one repetition of each at a time, so
+# drift in the machine's speed affects them all alike.
+#
 # WARNING: wipes the Compose stack's MySQL and Redis data (docker compose down -v)
 # before each run. The stack is left running at the last worker count.
 set -euo pipefail
@@ -20,9 +23,9 @@ REPEATS=${REPEATS:-1}
 run_id="matrix-$(date +%Y%m%d-%H%M%S)"
 
 docker compose build --quiet
-for workers in $WORKER_COUNTS; do
-  for rate in $RATES; do
-    for rep in $(seq "$REPEATS"); do
+for rep in $(seq "$REPEATS"); do
+  for workers in $WORKER_COUNTS; do
+    for rate in $RATES; do
       label="$run_id-w$workers"
       rate_args=()
       if [ "$rate" != burst ]; then
