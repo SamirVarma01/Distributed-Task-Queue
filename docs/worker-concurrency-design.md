@@ -1,6 +1,6 @@
-# Per-worker concurrency: design (draft for review)
+# Per-worker concurrency: design
 
-DTQ Improvement Plan, Phase 5. Status: **proposal**. Nothing here is implemented yet.
+DTQ Improvement Plan, Phase 5. Status: **accepted** on 2026-11-02 with every proposal below, and implemented in `dtq/worker.py`.
 
 ## Goal
 
@@ -91,10 +91,18 @@ Integration tests, with a real worker process:
 
 - SIGKILL a worker with N tasks in flight; a second worker reclaims all N and finishes them.
 
-## Questions for you
+## Decisions
 
-1. Threads for slots (Decision 1)?
-2. A dispatcher plus slot threads, or N independent loops (Decision 2)?
-3. One heartbeat thread for all in-flight messages, or one per message (Decision 3)?
-4. A shared consumer name (Decision 4)?
-5. For Phase 7's matrix, which configurations? I'd suggest 1 worker at concurrency 1, 5 and 10 next to 1, 5 and 10 workers at concurrency 1, for `noop` and `sleep_ms`.
+| # | Question | Decision |
+|---|---|---|
+| 1 | Threads or processes for slots | Threads; tasks with a timeout run in their slot's child process |
+| 2 | How slots get messages | One dispatcher that reads only while it holds a free slot |
+| 3 | Heartbeats | One heartbeat thread for every in-flight message |
+| 4 | Consumer names | Slots share the worker's name |
+| 5 | Phase 7 benchmark matrix | 1 worker at concurrency 1, 5 and 10, next to 1, 5 and 10 workers at concurrency 1 |
+
+## Notes from implementing it
+
+- **The heartbeat table records each message's consumer** along with its stream, so a worker whose name changes after it starts (the tests rename theirs) still owns what it touches.
+- **Stale messages are reclaimed one per free slot.** A reclaim pass now spans several turns of the dispatcher's loop, taking one stale message per turn until none are left; before, one pass ran every stale message in turn.
+- **`Worker.step()` remains** for tests and drives the same path as the dispatcher, running the message in the calling thread.
