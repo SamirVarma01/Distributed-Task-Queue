@@ -6,6 +6,8 @@ import pytest
 from dtq.agents import demo, tools
 from dtq.agents.tools import ToolError
 
+from .agent_support import drain
+
 
 @pytest.mark.parametrize("expression,value", [
     ("2 + 3 * 4", 14), ("(1 + 2) ** 3", 27), ("7 // 2", 3), ("-7 % 3", 2), ("1 / 4", 0.25), ("+1.5", 1.5),
@@ -78,6 +80,25 @@ def test_send_notification_records_every_execution_and_check_finds_the_first():
 
 
 def test_demo_tools_declare_their_effects():
-    assert {n: tools.get(n).effect.value for n in ("echo", "calculator", "http_get", "send_notification")} == {
-        "echo": "read_only", "calculator": "read_only", "http_get": "read_only", "send_notification": "side_effect"}
+    names = ("echo", "calculator", "http_get", "send_notification", "publish_announcement")
+    assert {n: (tools.get(n).effect.value, tools.get(n).requires_approval) for n in names} == {
+        "echo": ("read_only", False), "calculator": ("read_only", False), "http_get": ("read_only", False),
+        "send_notification": ("side_effect", False), "publish_announcement": ("side_effect", True)}
     assert tools.get("send_notification").check is demo.notification_sent
+    assert tools.get("publish_announcement").check is demo.notification_sent
+
+
+
+def test_demo_approval_script(client, make_worker):
+    run_id = client.post("/runs", json={"goal": "announce", "model": {"provider": "scripted", "name": "demo-approval"},
+                                        "tools": ["publish_announcement"]}).json()["id"]
+    worker = make_worker()
+    drain(worker)
+    assert client.get(f"/runs/{run_id}").json()["status"] == "awaiting_approval"
+
+    client.post(f"/runs/{run_id}/approve", json={"step_no": 1})
+    drain(worker)
+
+    run = client.get(f"/runs/{run_id}").json()
+    assert (run["status"], run["result"]) == ("succeeded", "Published the announcement.")
+    assert demo.notification_sent(f"{run_id}:2")["id"] == client.get(f"/runs/{run_id}/steps").json()[2]["output"]["id"]

@@ -113,6 +113,12 @@ def send_notification(to: str, text: str, *, idempotency_key: str) -> dict:
     return {"sent": True, "id": _deliver(idempotency_key, to, text)}
 
 
+@tool(effect="side_effect", check=notification_sent, requires_approval=True)
+def publish_announcement(text: str, *, idempotency_key: str) -> dict:
+    """Publish an announcement to everyone. A person must approve each one."""
+    return {"published": True, "id": _deliver(idempotency_key, "everyone", text)}
+
+
 # Made-up token counts.
 scripted.script("demo-echo", [  # two parallel tool calls, then a final answer
     scripted.call_tools(("echo", {"text": "hello"}), ("echo", {"text": "world"}), input_tokens=50, output_tokens=20),
@@ -123,4 +129,8 @@ scripted.script("demo-notify", [  # a read-only call, then a side-effecting one
     scripted.call_tools(("send_notification", {"to": "ops", "text": "The answer is 42."}),
                         input_tokens=110, output_tokens=25),
     scripted.answer("Sent ops the answer, 42.", input_tokens=150, output_tokens=10),
+])
+scripted.script("demo-approval", [  # a call that waits for a person's approval
+    scripted.call_tools(("publish_announcement", {"text": "The queue is up."}), input_tokens=40, output_tokens=15),
+    scripted.answer("Published the announcement.", input_tokens=80, output_tokens=8),
 ])
