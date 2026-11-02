@@ -46,16 +46,26 @@ def llm_step_input(model: dict[str, Any]) -> dict[str, Any]:
 
 
 def new_step(s, run: AgentRun, step_no: int, kind: StepKind, turn: int, input: dict[str, Any],
-             call_id: str | None = None) -> Task:
+             call_id: str | None = None, idempotency_key: str | None = None) -> Task:
     """Add a pending step and its DTQ task to the session. Send the task with send()
-    once the session commits."""
+    once the session commits. A tool step's idempotency key is "<run_id>:<step_no>",
+    unless it retries an earlier call, whose key it keeps."""
+    if kind == StepKind.TOOL and idempotency_key is None:
+        idempotency_key = f"{run.id}:{step_no}"
     s.add(AgentStep(run_id=run.id, step_no=step_no, turn=turn, kind=kind, status=StepStatus.PENDING,
-                    call_id=call_id, input=input,
-                    idempotency_key=f"{run.id}:{step_no}" if kind == StepKind.TOOL else None))
+                    call_id=call_id, input=input, idempotency_key=idempotency_key))
     task = Task(id=step_task_id(run.id, step_no), name=AGENT_STEP, queue=run.queue,
                 payload={"run_id": run.id, "step_no": step_no}, max_retries=run.step_max_retries)
     s.add(task)
     return task
+
+
+def allocate_steps(s, run_id: str, count: int) -> int:
+    """Reserve count step numbers, returning the first. The caller holds the run row's
+    lock, so numbers are handed out in order and never twice."""
+    first = s.scalar(select(AgentRun.next_step_no).where(AgentRun.id == run_id).with_for_update())
+    s.execute(update(AgentRun).where(AgentRun.id == run_id).values(next_step_no=first + count))
+    return first
 
 
 def send(tasks: list[Task]) -> None:
@@ -276,8 +286,7 @@ def _pause_for_unknown_outcome(s, run_id: str, step: AgentStep) -> None:
     approval step for it, and pause the run. The caller holds the run row's lock. The
     turn's other calls keep running; the next turn waits, because this call has no
     result."""
-    n = s.scalar(select(AgentRun.next_step_no).where(AgentRun.id == run_id).with_for_update())
-    s.execute(update(AgentRun).where(AgentRun.id == run_id).values(next_step_no=n + 1))
+    n = allocate_steps(s, run_id, 1)
     s.add(AgentStep(run_id=run_id, step_no=n, turn=step.turn, kind=StepKind.APPROVAL, status=StepStatus.WAITING,
                     call_id=step.call_id,
                     input={"reason": "unknown_outcome", "step_no": step.step_no,
@@ -318,7 +327,7 @@ def _record(run: AgentRun, step: AgentStep, attempt: int, outcome: Outcome) -> l
             if active.rowcount:
                 _pause_for_unknown_outcome(s, run.id, step)
             return []
-        return _after_tool(s, run, step)
+        return call_finished(s, run, step.turn)
 
 
 def _after_llm(s, run: AgentRun, step: AgentStep, outcome: Outcome) -> list[Task]:
@@ -333,35 +342,40 @@ def _after_llm(s, run: AgentRun, step: AgentStep, outcome: Outcome) -> list[Task
     if not calls:
         transition(s, run.id, RunStatus.RUNNING, RunStatus.SUCCEEDED, result=outcome.output["text"])
         return []
+    return schedule_tools(s, run, step.turn, calls)
+
+
+def schedule_tools(s, run: AgentRun, turn: int, calls: list[dict[str, Any]]) -> list[Task]:
+    """Create a tool step for each of the turn's calls, numbered in the order the LLM
+    listed them, if the run is still running that turn."""
     scheduling = s.execute(
         update(AgentRun)
-        .where(AgentRun.id == run.id, AgentRun.turn == step.turn, AgentRun.status == RunStatus.RUNNING)
+        .where(AgentRun.id == run.id, AgentRun.turn == turn, AgentRun.status == RunStatus.RUNNING)
         .values(calls_remaining=len(calls))
     )
     if not scheduling.rowcount:
         return []
-    first = s.scalar(select(AgentRun.next_step_no).where(AgentRun.id == run.id).with_for_update())
-    s.execute(update(AgentRun).where(AgentRun.id == run.id).values(next_step_no=first + len(calls)))
-    return [new_step(s, run, first + i, StepKind.TOOL, step.turn, {"tool": c["name"], "args": c["args"]}, c["id"])
+    first = allocate_steps(s, run.id, len(calls))
+    return [new_step(s, run, first + i, StepKind.TOOL, turn, {"tool": c["name"], "args": c["args"]}, c["id"])
             for i, c in enumerate(calls)]
 
 
-def _after_tool(s, run: AgentRun, step: AgentStep) -> list[Task]:
-    """Count this call's result against the turn. The call that takes calls_remaining
-    from 1 to 0 creates the next LLM step, so the next turn starts exactly once."""
+def call_finished(s, run: AgentRun, turn: int) -> list[Task]:
+    """Count a call's result against its turn. The call that takes calls_remaining from
+    1 to 0 creates the next LLM step, so the next turn starts exactly once."""
     last = s.execute(
         update(AgentRun)
-        .where(AgentRun.id == run.id, AgentRun.turn == step.turn, AgentRun.calls_remaining == 1,
+        .where(AgentRun.id == run.id, AgentRun.turn == turn, AgentRun.calls_remaining == 1,
                AgentRun.status == RunStatus.RUNNING)
         .values(calls_remaining=0)
     )
     if not last.rowcount:
         s.execute(
             update(AgentRun)
-            .where(AgentRun.id == run.id, AgentRun.turn == step.turn, AgentRun.calls_remaining > 0)
+            .where(AgentRun.id == run.id, AgentRun.turn == turn, AgentRun.calls_remaining > 0)
             .values(calls_remaining=AgentRun.calls_remaining - 1)
         )
         return []
-    n = s.scalar(select(AgentRun.next_step_no).where(AgentRun.id == run.id).with_for_update())
-    s.execute(update(AgentRun).where(AgentRun.id == run.id).values(turn=n, next_step_no=n + 1))
+    n = allocate_steps(s, run.id, 1)
+    s.execute(update(AgentRun).where(AgentRun.id == run.id).values(turn=n))
     return [new_step(s, run, n, StepKind.LLM, n, llm_step_input(run.model))]
