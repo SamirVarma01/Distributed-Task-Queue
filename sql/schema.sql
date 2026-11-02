@@ -78,3 +78,14 @@ CREATE TABLE IF NOT EXISTS agent_steps (
   PRIMARY KEY (run_id, step_no),
   CONSTRAINT fk_agent_steps_run FOREIGN KEY (run_id) REFERENCES agent_runs (id)
 ) ENGINE=InnoDB;
+
+-- The demo send_notification tool's "outside world": one row per notification sent.
+-- The idempotency key deliberately isn't unique, so every execution is recorded and
+-- the chaos test can count duplicate side effects instead of the database hiding them.
+CREATE TABLE IF NOT EXISTS side_effect_sink (
+  id              BIGINT      NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  idempotency_key VARCHAR(80) NOT NULL,
+  payload         JSON        NOT NULL,
+  created_at      DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  KEY ix_side_effect_sink_key (idempotency_key)
+) ENGINE=InnoDB;

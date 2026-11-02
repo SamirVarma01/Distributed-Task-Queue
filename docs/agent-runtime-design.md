@@ -81,7 +81,7 @@ CREATE TABLE agent_steps (
 - **Step inputs:**
   - LLM: `{"model", "max_output_tokens", "messages_sha256"}`. The prompt itself is rebuilt from earlier steps (section 6). The hash lets tests check that a re-executed call sent the same prompt.
   - tool: `{"tool", "args"}`.
-  - approval: `{"reason": "approval_required" | "unknown_outcome", "calls": [{"call_id", "tool", "args"}]}`.
+  - approval: `{"reason": "approval_required" | "unknown_outcome", "calls": [{"call_id", "tool", "args"}]}`, plus, for an unknown outcome, the `step_no` of the call's tool step.
 - **Step outputs:**
   - LLM: a provider-neutral response, `{"text", "tool_calls": [{"id", "name", "args"}], "stop_reason"}`.
   - tool: the return value, or `{"error": ...}`.

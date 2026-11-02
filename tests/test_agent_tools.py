@@ -1,4 +1,7 @@
+from typing import Annotated, Literal
+
 import pytest
+from pydantic import Field
 
 from dtq.agents import tools
 from dtq.agents.tools import Effect, tool
@@ -22,20 +25,63 @@ def test_registered_tools():
     assert tools.get("missing") is None
 
 
-def test_side_effecting_tools_wait_for_phase_3():
-    with pytest.raises(NotImplementedError, match="Phase 3"):
-        @tool(effect="side_effect")
-        def send(to: str): ...
+def test_side_effect_is_the_default_and_only_side_effecting_tools_take_a_check():
+    @tool()
+    def undeclared(): ...
 
-    with pytest.raises(NotImplementedError):  # side_effect is the default
-        @tool()
-        def undeclared(): ...
+    def sent(idempotency_key): ...
 
-    assert "send" not in tools.names() and "undeclared" not in tools.names()
+    @tool(effect="side_effect", check=sent)
+    def send(to: str): ...
+
+    assert tools.get("undeclared").effect is Effect.SIDE_EFFECT
+    assert tools.get("undeclared").requires_approval is False
+    assert (tools.get("send").effect, tools.get("send").check) == (Effect.SIDE_EFFECT, sent)
+    with pytest.raises(ValueError, match="check is for side-effecting tools"):
+        tool(effect="read_only", check=sent)
+
+
+@tool(effect="read_only")
+def search(query: str, limit: Annotated[int, Field(ge=1, le=50)] = 10, tags: list[str] | None = None, order: Literal["new", "old"] = "new",
+           *, idempotency_key: str) -> list:
+    """Search."""
+    return []
+
+
+def test_parameter_schema_comes_from_type_hints():
+    schema = tools.get("search").parameters
+
+    assert schema["required"] == ["query"]
+    assert schema["additionalProperties"] is False
+    props = schema["properties"]
+    assert set(props) == {"query", "limit", "tags", "order"}  # not idempotency_key
+    assert (props["query"]["type"], props["limit"]["type"], props["limit"]["default"]) == ("string", "integer", 10)
+    assert (props["limit"]["minimum"], props["limit"]["maximum"]) == (1, 50)
+    assert props["order"]["enum"] == ["new", "old"]
+    assert {"type": "array", "items": {"type": "string"}} in props["tags"]["anyOf"]
+
+
+def test_bind_args_validates_types():
+    t = tools.get("search")
+    assert tools.bind_args(t, {"query": "q", "tags": ["a"]}, "run:3") == {
+        "query": "q", "limit": 10, "tags": ["a"], "order": "new", "idempotency_key": "run:3"}
+    for limit in ("many", 0, 51):
+        with pytest.raises(TypeError, match="limit"):
+            tools.bind_args(t, {"query": "q", "limit": limit}, "run:3")
+    with pytest.raises(TypeError, match="order"):
+        tools.bind_args(t, {"query": "q", "order": "random"}, "run:3")
+    with pytest.raises(TypeError):
+        tools.bind_args(t, ["not", "an", "object"], "run:3")
+
+
+def test_tools_take_named_parameters_only():
+    with pytest.raises(TypeError, match="named parameters only"):
+        @tool(effect="read_only")
+        def varargs(*items): ...
 
 
 def test_bind_args_passes_the_idempotency_key_to_tools_that_take_it():
-    assert tools.bind_args(tools.get("read_setting"), {"key": "k"}, "run:3") == {"key": "k"}
+    assert tools.bind_args(tools.get("read_setting"), {"key": "k"}, "run:3") == {"key": "k", "default": ""}
     assert tools.bind_args(tools.get("upsert_record"), {"record": {}}, "run:3") == {
         "record": {}, "idempotency_key": "run:3"}
 

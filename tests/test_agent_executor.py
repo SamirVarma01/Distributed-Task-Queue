@@ -1,8 +1,8 @@
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from dtq import config, registry
-from dtq.agents import executor, llm, scripted
+from dtq.agents import demo, executor, llm, scripted
 from dtq.agents.history import prompt_sha256
 from dtq.agents.models import AgentRun, AgentStep, RunStatus, StepKind, StepStatus
 from dtq.agents.tools import ToolError, tool
@@ -76,9 +76,9 @@ def setup(monkeypatch):
     monkeypatch.setattr(config, "RECONCILE_INTERVAL_SECONDS", float("inf"))
 
 
-def start_run(client, script: str = "three-turns", **kw) -> str:
+def start_run(client, script: str = "three-turns", tools=("lookup", "strict"), **kw) -> str:
     resp = client.post("/runs", json={"goal": "find a, b and c", "model": {"provider": "spy", "name": script},
-                                      "tools": ["lookup", "strict"], **kw})
+                                      "tools": list(tools), **kw})
     assert resp.status_code == 202, resp.text
     return resp.json()["id"]
 
@@ -280,8 +280,8 @@ def test_the_highest_attempt_owns_a_step_while_both_are_running(client):
     """Drive the phases directly to interleave attempts that are all mid-step: the
     highest attempt owns the step from the moment it begins."""
     run_id = start_run(client)
-    run1, step1, prompt1 = executor._begin(run_id, 0, 1)
-    run3, step3, prompt3 = executor._begin(run_id, 0, 3)  # a reclaim takes the step over
+    run1, step1, prompt1, _ = executor._begin(run_id, 0, 1)
+    run3, step3, prompt3, _ = executor._begin(run_id, 0, 3)  # a reclaim takes the step over
 
     # An older attempt can't take it back, even though the step is still running.
     assert executor._begin(run_id, 0, 2) == "the step has finished, or a later attempt owns it"
@@ -398,3 +398,250 @@ def test_demo_script_runs_end_to_end(client, make_worker):
     run = get_run(resp.json()["id"])
     assert (run.status, run.result) == (RunStatus.SUCCEEDED, "The tools said hello and world.")
     assert [s.output for s in get_steps(run.id)][1:3] == ["hello", "world"]
+
+
+# Side effects. effects is "the outside world": what the side-effecting tools did.
+effects: list[tuple[str, str]] = []
+# "<tool>:before" / "<tool>:after" the effect -> an exception to raise there, or a
+# function to call there, once.
+faults: dict = {}
+
+
+def fault(point: str) -> None:
+    f = faults.pop(point, None)
+    if isinstance(f, BaseException):
+        raise f
+    if f is not None:
+        f()
+
+
+@tool(effect="side_effect")
+def charge(amount: int, *, idempotency_key: str) -> dict:
+    """Charge an amount. Not safe to repeat, and no way to tell afterwards if it happened."""
+    fault("charge:before")
+    effects.append(("charge", idempotency_key))
+    fault("charge:after")
+    return {"charged": amount}
+
+
+def notified(idempotency_key: str):
+    return {"sent": True} if ("notify", idempotency_key) in effects else None
+
+
+@tool(effect="side_effect", check=notified)
+def notify(text: str, *, idempotency_key: str) -> dict:
+    """Send a notification. Not safe to repeat, but check can tell if it was sent."""
+    fault("notify:before")
+    effects.append(("notify", idempotency_key))
+    fault("notify:after")
+    return {"sent": True}
+
+
+scripted.script("side-effects", [
+    scripted.call_tools(("charge", {"amount": 5}), ("notify", {"text": "paid"}), ("lookup", {"key": "a"})),
+    scripted.answer("charged and notified"),
+])
+SIDE_EFFECT_TOOLS = ("charge", "notify", "lookup")
+
+
+@pytest.fixture(autouse=True)
+def clear_effects():
+    effects.clear()
+    faults.clear()
+
+
+def start_side_effect_run(client) -> str:
+    return start_run(client, script="side-effects", tools=SIDE_EFFECT_TOOLS)
+
+
+def assert_paused_on_unknown_outcome(run_id: str, step_no: int, tool_name: str):
+    steps = get_steps(run_id)
+    unknown, approval = steps[step_no], steps[-1]
+    assert unknown.status == StepStatus.UNKNOWN_OUTCOME
+    assert (approval.kind, approval.status, approval.turn) == (StepKind.APPROVAL, StepStatus.WAITING, unknown.turn)
+    assert approval.input["reason"] == "unknown_outcome" and approval.input["step_no"] == step_no
+    assert [c["tool"] for c in approval.input["calls"]] == [tool_name]
+    run = get_run(run_id)
+    assert run.status == RunStatus.AWAITING_APPROVAL and run.paused_at is not None
+    # The turn waits on this call, so the next turn hasn't started.
+    assert (run.turn, run.calls_remaining) == (unknown.turn, 1)
+    assert not [s for s in steps if s.kind == StepKind.LLM and s.turn > unknown.turn]
+
+
+def test_side_effecting_calls_run_once(client, make_worker):
+    run_id = start_side_effect_run(client)
+    w = make_worker()
+    drain(w)
+    for n in range(5):  # re-deliver every step
+        w.broker.enqueue("default", executor.step_task_id(run_id, n))
+    drain(w)
+
+    assert get_run(run_id).status == RunStatus.SUCCEEDED
+    assert effects == [("charge", f"{run_id}:1"), ("notify", f"{run_id}:2")]
+
+
+@pytest.mark.parametrize("point", ["before", "after"])
+def test_interrupted_call_without_check_is_never_repeated(client, make_worker, monkeypatch, point):
+    """Whether or not the charge happened before the worker died, the next attempt
+    can't tell, so it doesn't charge again: it marks the call unknown and pauses."""
+    run_id = start_side_effect_run(client)
+    faults[f"charge:{point}"] = Crash()
+    with pytest.raises(Crash):
+        drain(make_worker("killed"))
+
+    reclaim_immediately(monkeypatch)
+    drain(make_worker("survivor"))
+
+    assert effects.count(("charge", f"{run_id}:1")) == (1 if point == "after" else 0)
+    assert_paused_on_unknown_outcome(run_id, 1, "charge")
+    assert get_steps(run_id)[1].attempt == 2
+    assert [s.status for s in get_steps(run_id)[2:4]] == [StepStatus.SUCCEEDED] * 2  # the turn's other calls
+
+
+def test_check_settles_an_interrupted_call_that_happened(client, make_worker, monkeypatch):
+    run_id = start_side_effect_run(client)
+    faults["notify:after"] = Crash()
+    with pytest.raises(Crash):
+        drain(make_worker("killed"))
+
+    reclaim_immediately(monkeypatch)
+    drain(make_worker("survivor"))
+
+    assert get_run(run_id).status == RunStatus.SUCCEEDED
+    notify_step = get_steps(run_id)[2]
+    assert (notify_step.status, notify_step.output, notify_step.attempt) == (StepStatus.SUCCEEDED, {"sent": True}, 2)
+    assert effects.count(("notify", f"{run_id}:2")) == 1
+
+
+def test_check_finding_nothing_leaves_the_outcome_unknown(client, make_worker, monkeypatch):
+    """No sign of the call doesn't prove it never happens: a stalled attempt could still
+    make it. So the call isn't retried."""
+    run_id = start_side_effect_run(client)
+    faults["notify:before"] = Crash()
+    with pytest.raises(Crash):
+        drain(make_worker("killed"))
+
+    reclaim_immediately(monkeypatch)
+    drain(make_worker("survivor"))
+
+    assert ("notify", f"{run_id}:2") not in effects
+    assert_paused_on_unknown_outcome(run_id, 2, "notify")
+    assert get_steps(run_id)[2].output == {"error": executor.INTERRUPTED + "; check found no sign of it"}
+
+
+def test_side_effecting_call_that_raises_is_not_retried(client, make_worker):
+    """A timeout or dropped connection may come after the effect, so it isn't treated
+    as a failure DTQ can retry."""
+    run_id = start_side_effect_run(client)
+    faults["charge:after"] = TimeoutError("no response")
+    drain(make_worker())
+
+    assert effects.count(("charge", f"{run_id}:1")) == 1
+    assert_paused_on_unknown_outcome(run_id, 1, "charge")
+    charge_step = get_steps(run_id)[1]
+    assert (charge_step.attempt, charge_step.output) == (1, {"error": "the call raised TimeoutError: no response"})
+    assert get_task(executor.step_task_id(run_id, 1)).status == TaskStatus.SUCCEEDED
+
+
+def test_check_settles_a_side_effecting_call_that_raised(client, make_worker):
+    run_id = start_side_effect_run(client)
+    faults["notify:after"] = ConnectionResetError("dropped")
+    drain(make_worker())
+
+    assert get_run(run_id).status == RunStatus.SUCCEEDED
+    assert get_steps(run_id)[2].output == {"sent": True}
+    assert effects.count(("notify", f"{run_id}:2")) == 1
+
+
+def test_tool_error_from_a_side_effecting_tool_is_a_definite_failure(client, make_worker):
+    run_id = start_side_effect_run(client)
+    faults["charge:before"] = ToolError("card declined")
+    drain(make_worker())
+
+    assert get_run(run_id).status == RunStatus.SUCCEEDED
+    assert get_steps(run_id)[1].output == {"error": "card declined"}
+    assert ("charge", f"{run_id}:1") not in effects
+
+
+def test_unknown_outcome_after_cancel_does_not_pause_the_run(client, make_worker):
+    run_id = start_side_effect_run(client)
+
+    def cancel_then_time_out():
+        assert client.post(f"/runs/{run_id}/cancel").status_code == 200
+        raise TimeoutError("no response")
+
+    faults["charge:after"] = cancel_then_time_out
+    drain(make_worker())
+
+    run = get_run(run_id)
+    assert (run.status, run.paused_at) == (RunStatus.CANCELLED, None)
+    steps = get_steps(run_id)
+    assert steps[1].status == StepStatus.UNKNOWN_OUTCOME
+    assert StepKind.APPROVAL not in [s.kind for s in steps]
+
+
+@tool(effect="side_effect", requires_approval=True)
+def delete_account(user: str) -> None:
+    """Delete an account. Needs a person's approval."""
+    effects.append(("delete_account", user))
+
+
+scripted.script("needs-approval", [scripted.call_tools(("delete_account", {"user": "u1"})), scripted.answer("done")])
+
+
+def test_a_tool_requiring_approval_is_never_called_without_it(client, make_worker):
+    """POST /runs refuses these tools until Phase 4; a run that has one anyway (written
+    to the database directly) still never calls it."""
+    run_id = start_run(client, script="needs-approval", tools=["lookup"])
+    with SessionLocal() as s:
+        s.execute(update(AgentRun).where(AgentRun.id == run_id).values(tools=["delete_account"]))
+        s.commit()
+    drain(make_worker())
+
+    assert effects == []
+    assert get_steps(run_id)[1].output == {"error": "'delete_account' requires approval, which isn't supported yet"}
+
+
+def sink_rows(idempotency_key: str) -> int:
+    with SessionLocal() as s:
+        return len(s.scalars(select(demo.SinkEntry).where(demo.SinkEntry.idempotency_key == idempotency_key)).all())
+
+
+@pytest.mark.parametrize("point", ["after", "before"])
+def test_demo_notification_is_sent_at_most_once_despite_a_crash_and_redelivery(client, make_worker, monkeypatch,
+                                                                             point):
+    """With the real sink. Killed after sending: the step taken over doesn't send
+    again, check finds the notification, and the run finishes (1 row). Killed between
+    the intent and the send: the outcome is unknown and the run waits for a person
+    instead of sending (0 rows). Either way, re-delivering every step's message
+    changes nothing."""
+    run_id = start_run(client, script="demo-notify", tools=("calculator", "send_notification"))
+    real_deliver = demo._deliver
+
+    def deliver_and_die(key, to, text):
+        monkeypatch.setattr(demo, "_deliver", real_deliver)
+        if point == "after":
+            real_deliver(key, to, text)
+        raise Crash
+
+    monkeypatch.setattr(demo, "_deliver", deliver_and_die)
+    with pytest.raises(Crash):
+        drain(make_worker("killed"))  # steps 0-2, then dies in step 3, send_notification
+
+    reclaim_immediately(monkeypatch)
+    survivor = make_worker("survivor")
+    drain(survivor)
+    for step in get_steps(run_id):
+        if step.kind != StepKind.APPROVAL:
+            survivor.broker.enqueue("default", executor.step_task_id(run_id, step.step_no))
+    drain(survivor)
+
+    send = get_steps(run_id)[3]
+    assert (send.input["tool"], send.attempt) == ("send_notification", 2)
+    if point == "after":
+        assert sink_rows(f"{run_id}:3") == 1
+        assert send.status == StepStatus.SUCCEEDED and send.output["sent"] is True
+        assert get_run(run_id).status == RunStatus.SUCCEEDED
+    else:
+        assert sink_rows(f"{run_id}:3") == 0
+        assert_paused_on_unknown_outcome(run_id, 3, "send_notification")
