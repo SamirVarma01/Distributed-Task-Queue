@@ -222,6 +222,8 @@ def _call_tool(run: AgentRun, step: AgentStep, took_over: bool) -> Outcome:
         kwargs = tools.bind_args(t, args, step.idempotency_key)
     except TypeError as exc:
         return Outcome(StepStatus.FAILED, {"error": f"bad arguments for {name!r}: {exc}"})
+    if t.requires_approval:  # POST /runs refuses these until approvals exist (Phase 4)
+        return Outcome(StepStatus.FAILED, {"error": f"{name!r} requires approval, which isn't supported yet"})
     if took_over and t.effect is Effect.SIDE_EFFECT:
         return _check(t, step, INTERRUPTED)
     try:

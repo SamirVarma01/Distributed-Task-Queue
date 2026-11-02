@@ -34,6 +34,7 @@ def test_side_effect_is_the_default_and_only_side_effecting_tools_take_a_check()
     def send(to: str): ...
 
     assert tools.get("undeclared").effect is Effect.SIDE_EFFECT
+    assert tools.get("undeclared").requires_approval is False
     assert (tools.get("send").effect, tools.get("send").check) == (Effect.SIDE_EFFECT, sent)
     with pytest.raises(ValueError, match="check is for side-effecting tools"):
         tool(effect="read_only", check=sent)

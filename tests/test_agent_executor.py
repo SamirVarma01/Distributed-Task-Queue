@@ -1,5 +1,5 @@
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from dtq import config, registry
 from dtq.agents import executor, llm, scripted
@@ -577,3 +577,25 @@ def test_unknown_outcome_after_cancel_does_not_pause_the_run(client, make_worker
     steps = get_steps(run_id)
     assert steps[1].status == StepStatus.UNKNOWN_OUTCOME
     assert StepKind.APPROVAL not in [s.kind for s in steps]
+
+
+@tool(effect="side_effect", requires_approval=True)
+def delete_account(user: str) -> None:
+    """Delete an account. Needs a person's approval."""
+    effects.append(("delete_account", user))
+
+
+scripted.script("needs-approval", [scripted.call_tools(("delete_account", {"user": "u1"})), scripted.answer("done")])
+
+
+def test_a_tool_requiring_approval_is_never_called_without_it(client, make_worker):
+    """POST /runs refuses these tools until Phase 4; a run that has one anyway (written
+    to the database directly) still never calls it."""
+    run_id = start_run(client, script="needs-approval", tools=["lookup"])
+    with SessionLocal() as s:
+        s.execute(update(AgentRun).where(AgentRun.id == run_id).values(tools=["delete_account"]))
+        s.commit()
+    drain(make_worker())
+
+    assert effects == []
+    assert get_steps(run_id)[1].output == {"error": "'delete_account' requires approval, which isn't supported yet"}

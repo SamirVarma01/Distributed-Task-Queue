@@ -34,6 +34,8 @@ class Tool:
     # For a side-effecting tool: check(idempotency_key) returns the call's result if
     # the call happened, or None if there is no sign that it did.
     check: Callable[[str], Any] | None
+    # A person must approve each call before it runs (agent runtime Phase 4).
+    requires_approval: bool
     # The tool's parameters, from its type hints: validates the LLM's arguments, and
     # gives the JSON schema the LLM is shown.
     args_model: type[BaseModel]
@@ -59,7 +61,7 @@ _TOOLS: dict[str, Tool] = {}
 
 
 def tool(name: str | None = None, *, effect: Effect | str = Effect.SIDE_EFFECT,
-         check: Callable[[str], Any] | None = None):
+         check: Callable[[str], Any] | None = None, requires_approval: bool = False):
     """Register a function as a tool. Its docstring is the description the LLM sees.
     A tool with an idempotency_key parameter is passed its call's key.
 
@@ -71,7 +73,7 @@ def tool(name: str | None = None, *, effect: Effect | str = Effect.SIDE_EFFECT,
 
     def decorator(fn: Callable[..., Any]) -> Callable[..., Any]:
         key = name or fn.__name__
-        _TOOLS[key] = Tool(key, fn, effect, inspect.getdoc(fn) or "", check, _args_model(fn),
+        _TOOLS[key] = Tool(key, fn, effect, inspect.getdoc(fn) or "", check, requires_approval, _args_model(fn),
                            "idempotency_key" in inspect.signature(fn).parameters)
         return fn
 

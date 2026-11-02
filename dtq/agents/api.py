@@ -99,6 +99,9 @@ def submit_run(body: SubmitRun):
     unknown = [name for name in body.tools if tools.get(name) is None]
     if unknown:
         raise HTTPException(400, f"unknown tools {unknown}; available: {tools.names()}")
+    gated = [name for name in body.tools if tools.get(name).requires_approval]
+    if gated:
+        raise HTTPException(400, f"tools {gated} require approval, which agent runtime Phase 4 adds")
 
     run = AgentRun(id=str(uuid.uuid4()), **body.model_dump(exclude={"model"}), model=body.model.model_dump())
     with SessionLocal() as s:
