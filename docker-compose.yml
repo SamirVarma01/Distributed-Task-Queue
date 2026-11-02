@@ -4,6 +4,10 @@ x-app: &app
     REDIS_URL: redis://redis:6379/0
     MYSQL_URL: mysql+pymysql://dtq:dtq@mysql:3306/dtq
     QUEUES: high,default,low
+    # Real LLM providers for agent runs, enabled when their key is set in the shell
+    # that runs docker compose (dtq/agents/providers).
+    ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    OPENAI_API_KEY: ${OPENAI_API_KEY:-}
   depends_on:
     mysql:
       condition: service_healthy

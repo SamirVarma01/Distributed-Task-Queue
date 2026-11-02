@@ -170,3 +170,63 @@ def test_errors_are_classified_for_retries(error, retryable):
         provider.complete(request([{"role": "user", "content": "hi"}]))
     assert exc.value.retryable is retryable
     assert str(exc.value).startswith(type(error).__name__)
+
+
+def test_providers_are_registered_from_credentials_in_the_environment(monkeypatch):
+    from dtq.agents import llm
+    from dtq.agents.providers import register_configured
+
+    monkeypatch.setattr(llm, "_PROVIDERS", dict(llm._PROVIDERS))
+    for name in ("anthropic", "openai"):
+        llm._PROVIDERS.pop(name, None)
+
+    assert register_configured({}) == []
+    assert register_configured({"ANTHROPIC_API_KEY": "", "OPENAI_API_KEY": ""}) == []
+    assert register_configured({"ANTHROPIC_AUTH_TOKEN": "t", "OPENAI_API_KEY": "k"}) == ["anthropic", "openai"]
+    assert {"anthropic", "openai"} <= set(llm.provider_names())
+    assert llm.PRICES["claude-opus-5-5"] == (4.0, 20.0)
+
+
+class ScriptedClient:
+    """A fake Anthropic client that answers with queued Messages API responses."""
+
+    def __init__(self, replies):
+        self.beta = type("Beta", (), {})()
+        self.beta.messages = self
+        self.replies, self.calls = list(replies), []
+
+    def create(self, **params):
+        self.calls.append(params)
+        return Reply(self.replies.pop(0))
+
+
+def test_a_run_through_the_runner_replays_thinking_blocks_exactly(client, make_worker, monkeypatch):
+    from dtq.agents import llm
+
+    from .agent_support import drain, get_run
+
+    first = [{"type": "thinking", "thinking": "", "signature": "sig-1"},
+             {"type": "text", "text": "I'll compute it."},
+             {"type": "tool_use", "id": "toolu_1", "name": "calculator", "input": {"expression": "6 * 7"}}]
+    fake = ScriptedClient([message(first, "tool_use"),
+                           message([{"type": "thinking", "thinking": "", "signature": "sig-2"},
+                                    {"type": "text", "text": "It is 42."}])])
+    monkeypatch.setitem(llm._PROVIDERS, "anthropic", AnthropicProvider(fake))
+    monkeypatch.setitem(llm.PRICES, "claude-opus-5-5", (4.0, 20.0))
+
+    resp = client.post("/runs", json={"goal": "What is 6 * 7?", "model": {"provider": "anthropic",
+                                      "name": "claude-opus-5-5"}, "tools": ["calculator"]})
+    drain(make_worker())
+
+    run = get_run(resp.json()["id"])
+    assert (run.status.value, run.result) == ("succeeded", "It is 42.")
+    assert (run.input_tokens, run.output_tokens, run.cost_micros) == (200, 40, 2 * (100 * 4 + 20 * 20))
+    second = fake.calls[1]
+    assert second["messages"] == [
+        {"role": "user", "content": "What is 6 * 7?"},
+        {"role": "assistant", "content": first},  # exactly as the API returned it
+        {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "toolu_1", "content": "42",
+                                      "is_error": False}]},
+    ]
+    assert second["fallbacks"] == "default" and second["max_tokens"] == 16000
+    assert second["tools"][0]["input_schema"]["required"] == ["expression"]

@@ -23,6 +23,7 @@ from .. import registry
 from ..broker import Broker
 from ..db import SessionLocal, Task, utcnow
 from . import budgets, llm, scripted, tools  # noqa: F401  (scripted registers its provider)
+from .providers import register_configured
 from .history import build_messages, prompt_sha256
 from .models import AgentRun, AgentStep, RunStatus, StepKind, StepStatus
 from .states import ALLOWED_FROM, transition
@@ -34,6 +35,7 @@ AGENT_STEP = "agent_step"
 _NAMESPACE = uuid.uuid5(uuid.NAMESPACE_DNS, "agent-step.dtq")
 
 broker = Broker()
+register_configured()  # real LLM providers whose credentials are in the environment
 
 
 def step_task_id(run_id: str, step_no: int) -> str:
