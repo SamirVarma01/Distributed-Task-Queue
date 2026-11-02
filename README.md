@@ -1,5 +1,7 @@
 # DTQ — Distributed Task Queue
 
+[![CI](https://github.com/SamirVarma01/Distributed-Task-Queue/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/SamirVarma01/Distributed-Task-Queue/actions/workflows/ci.yml)
+
 A small distributed task queue: **Redis Streams** move the work, **MySQL** stores each task's status and result, and **Docker Compose** runs the API and any number of workers. On top of it, a [durable runtime for LLM agents](#agent-runtime) runs each LLM and tool call as a checkpointed task.
 
 ```
@@ -79,13 +81,26 @@ Redis runs with `--appendfsync always`, so each write is flushed to its append-o
 
 ## Tests
 
-The tests run without Docker: fakeredis stands in for Redis and SQLite for MySQL.
+The unit tests in `tests/` run without Docker: fakeredis stands in for Redis and SQLite for MySQL. The integration tests in `tests_integration/` run against real MySQL and Redis, which testcontainers starts in Docker. MySQL is built from `sql/Dockerfile`, so they also check the tables `sql/schema.sql` creates.
 
 ```sh
 python -m venv .venv && .venv/bin/pip install -r requirements.txt -r requirements-dev.txt
-.venv/bin/pytest
-.venv/bin/pytest -m live    # real LLM providers: needs ANTHROPIC_API_KEY and/or OPENAI_API_KEY, and costs money
+.venv/bin/pytest                      # unit tests
+.venv/bin/pytest tests_integration    # integration tests: needs Docker running
+.venv/bin/pytest -m live              # real LLM providers: needs ANTHROPIC_API_KEY and/or OPENAI_API_KEY, and costs money
 ```
+
+The integration tests cover:
+
+- a task from submission to `succeeded`, with its message acked and deleted;
+- retries with exponential backoff, until the task goes `dead`;
+- cancelling a task;
+- a duplicate message, and two workers claiming the same task at the same moment;
+- the reconciler sending a task after the API crashed between saving it and sending it;
+- a worker process killed with SIGKILL mid-task, whose message another worker process reclaims with `XAUTOCLAIM`;
+- the parallel tool calls of 30 agent runs on four workers. SQLite locks the whole database on every write, so only here do they really race.
+
+GitHub Actions (`.github/workflows/ci.yml`) runs the unit tests on every push and the integration tests on pull requests and pushes to main.
 
 ## Benchmarks
 
@@ -221,5 +236,4 @@ From `bench/results/agent-bench-20261102-052439-*.json`, at commit `3200dfd`, on
 - Per-task timeouts (run tasks in a subprocess and kill it when time runs out).
 - Several tasks running at once in each worker process (a thread or process pool).
 - Prometheus metrics and a dashboard.
-- Integration tests against real MySQL and Redis (testcontainers), which would also cover `sql/schema.sql`.
 - Agent runtime: prompt caching for Anthropic runs, prices for OpenAI models, and recorded results of the live provider tests.
