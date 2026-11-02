@@ -1,9 +1,9 @@
 """Tools an agent can call (docs/agent-runtime-design.md, section 7).
 
 Each tool declares its effect, which decides what happens when a worker crashes during
-a call. Side-effecting calls need the intent record and unknown-outcome handling of
-agent runtime Phase 3; until then only tools that are safe to run again, read-only and
-idempotent ones, can be registered."""
+a call: read-only and idempotent calls run again; a side-effecting call is never made
+twice. Its outcome is settled by the tool's check, if it has one, or else marked
+unknown for a person to decide."""
 
 import enum
 import inspect
@@ -31,6 +31,9 @@ class Tool:
     fn: Callable[..., Any]
     effect: Effect
     description: str
+    # For a side-effecting tool: check(idempotency_key) returns the call's result if
+    # the call happened, or None if there is no sign that it did.
+    check: Callable[[str], Any] | None
     # The tool's parameters, from its type hints: validates the LLM's arguments, and
     # gives the JSON schema the LLM is shown.
     args_model: type[BaseModel]
@@ -55,18 +58,20 @@ def _args_model(fn: Callable[..., Any]) -> type[BaseModel]:
 _TOOLS: dict[str, Tool] = {}
 
 
-def tool(name: str | None = None, *, effect: Effect | str = Effect.SIDE_EFFECT):
+def tool(name: str | None = None, *, effect: Effect | str = Effect.SIDE_EFFECT,
+         check: Callable[[str], Any] | None = None):
     """Register a function as a tool. Its docstring is the description the LLM sees.
-    A tool with an idempotency_key parameter is passed its call's key."""
+    A tool with an idempotency_key parameter is passed its call's key.
+
+    effect defaults to side_effect, so a tool that doesn't declare one is never run
+    twice. check is only for side-effecting tools (see Tool.check)."""
     effect = Effect(effect)
+    if check is not None and effect is not Effect.SIDE_EFFECT:
+        raise ValueError("check is for side-effecting tools; other tools are simply run again")
 
     def decorator(fn: Callable[..., Any]) -> Callable[..., Any]:
-        if effect is Effect.SIDE_EFFECT:
-            raise NotImplementedError(
-                f"{fn.__name__}: side-effecting tools need agent runtime Phase 3; "
-                "declare effect='read_only' or 'idempotent' if the tool is safe to run again")
         key = name or fn.__name__
-        _TOOLS[key] = Tool(key, fn, effect, inspect.getdoc(fn) or "", _args_model(fn),
+        _TOOLS[key] = Tool(key, fn, effect, inspect.getdoc(fn) or "", check, _args_model(fn),
                            "idempotency_key" in inspect.signature(fn).parameters)
         return fn
 

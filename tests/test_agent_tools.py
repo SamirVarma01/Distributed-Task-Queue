@@ -24,16 +24,19 @@ def test_registered_tools():
     assert tools.get("missing") is None
 
 
-def test_side_effecting_tools_wait_for_phase_3():
-    with pytest.raises(NotImplementedError, match="Phase 3"):
-        @tool(effect="side_effect")
-        def send(to: str): ...
+def test_side_effect_is_the_default_and_only_side_effecting_tools_take_a_check():
+    @tool()
+    def undeclared(): ...
 
-    with pytest.raises(NotImplementedError):  # side_effect is the default
-        @tool()
-        def undeclared(): ...
+    def sent(idempotency_key): ...
 
-    assert "send" not in tools.names() and "undeclared" not in tools.names()
+    @tool(effect="side_effect", check=sent)
+    def send(to: str): ...
+
+    assert tools.get("undeclared").effect is Effect.SIDE_EFFECT
+    assert (tools.get("send").effect, tools.get("send").check) == (Effect.SIDE_EFFECT, sent)
+    with pytest.raises(ValueError, match="check is for side-effecting tools"):
+        tool(effect="read_only", check=sent)
 
 
 @tool(effect="read_only")

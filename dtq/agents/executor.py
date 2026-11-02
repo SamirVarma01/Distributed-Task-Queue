@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import redis
-from sqlalchemy import and_, or_, select, update
+from sqlalchemy import select, update
 
 from .. import registry
 from ..broker import Broker
@@ -26,6 +26,7 @@ from . import llm, scripted, tools  # noqa: F401  (scripted registers its provid
 from .history import build_messages, prompt_sha256
 from .models import AgentRun, AgentStep, RunStatus, StepKind, StepStatus
 from .states import ALLOWED_FROM, transition
+from .tools import Effect
 
 log = logging.getLogger("dtq.agents")
 
@@ -102,8 +103,8 @@ def agent_step(run_id: str, step_no: int) -> dict[str, Any]:
         log.info("run %s step %d: nothing to do (%s)", run_id, step_no, begun)
         return {"step_no": step_no, "skipped": begun}
 
-    run, step, messages = begun
-    outcome = _call_llm(run, step, messages) if step.kind == StepKind.LLM else _call_tool(run, step)
+    run, step, messages, took_over = begun
+    outcome = _call_llm(run, step, messages) if step.kind == StepKind.LLM else _call_tool(run, step, took_over)
 
     next_tasks = _record(run, step, ctx.attempt, outcome)
     if next_tasks is None:
@@ -117,9 +118,13 @@ def agent_step(run_id: str, step_no: int) -> dict[str, Any]:
     return {"step_no": step_no, "status": outcome.status.value}
 
 
-def _begin(run_id: str, step_no: int, attempt: int) -> tuple[AgentRun, AgentStep, list | None] | str:
-    """Phase A. Returns the run, the step and (for an LLM step) its prompt, or a reason
-    there is nothing to do."""
+def _begin(run_id: str, step_no: int, attempt: int) -> tuple[AgentRun, AgentStep, list | None, bool] | str:
+    """Phase A. Returns the run, the step, its prompt (LLM steps only) and whether this
+    attempt took the step over from an earlier one; or a reason there is nothing to do.
+
+    Claiming the step commits it as started before anything is called. For a tool with
+    side effects, that row is the intent record: an attempt that takes the step over
+    never makes the call again (see _call_tool)."""
     with SessionLocal() as s, s.begin():
         step = s.get(AgentStep, (run_id, step_no))  # kind and turn never change
         if step is None:
@@ -138,21 +143,28 @@ def _begin(run_id: str, step_no: int, attempt: int) -> tuple[AgentRun, AgentStep
         if step.kind == StepKind.LLM:
             transition(s, run_id, RunStatus.QUEUED, RunStatus.RUNNING, started_at=utcnow())
 
-        # Claim the step: a pending one, or one a lower (stale) attempt left started. A
-        # step that finished, or that a higher attempt holds, is left alone.
-        claimed = s.execute(
-            update(AgentStep)
-            .where(AgentStep.run_id == run_id, AgentStep.step_no == step_no,
-                   or_(AgentStep.status == StepStatus.PENDING,
-                       and_(AgentStep.status == StepStatus.STARTED, AgentStep.attempt < attempt)))
+        run = s.get(AgentRun, run_id)
+        this_step = (AgentStep.run_id == run_id, AgentStep.step_no == step_no)
+        # Claim the step if it is pending; otherwise take it over if a lower (stale)
+        # attempt left it started. A step that finished, or that a higher attempt
+        # holds, is left alone.
+        fresh = s.execute(
+            update(AgentStep).where(*this_step, AgentStep.status == StepStatus.PENDING)
             .values(status=StepStatus.STARTED, attempt=attempt, started_at=utcnow())
         )
-        if not claimed.rowcount:
-            return "the step has finished, or a later attempt owns it"
+        took_over = False
+        if not fresh.rowcount:
+            taken = s.execute(
+                update(AgentStep)
+                .where(*this_step, AgentStep.status == StepStatus.STARTED, AgentStep.attempt < attempt)
+                .values(attempt=attempt, started_at=utcnow())
+            )
+            if not taken.rowcount:
+                return "the step has finished, or a later attempt owns it"
+            took_over = True
 
-        run = s.get(AgentRun, run_id)
         if step.kind != StepKind.LLM:
-            return run, step, None
+            return run, step, None, took_over
         steps = s.scalars(select(AgentStep).where(AgentStep.run_id == run_id)).all()
         messages = build_messages(run.goal, steps)
         s.execute(
@@ -160,7 +172,7 @@ def _begin(run_id: str, step_no: int, attempt: int) -> tuple[AgentRun, AgentStep
             .where(AgentStep.run_id == run_id, AgentStep.step_no == step_no)
             .values(input={**step.input, "messages_sha256": prompt_sha256(run.model["system"], messages)})
         )
-        return run, step, messages
+        return run, step, messages, took_over
 
 
 def _call_llm(run: AgentRun, step: AgentStep, messages: list) -> Outcome:
@@ -187,28 +199,83 @@ def _call_llm(run: AgentRun, step: AgentStep, messages: list) -> Outcome:
                    llm.cost_micros(run.model["name"], response.input_tokens, response.output_tokens))
 
 
-def _call_tool(run: AgentRun, step: AgentStep) -> Outcome:
+def _tool_for(run: AgentRun, step: AgentStep) -> tools.Tool | None:
+    """The tool a tool step calls, or None if it isn't one of the run's tools."""
+    if step.kind != StepKind.TOOL or step.input["tool"] not in run.tools:
+        return None
+    return tools.get(step.input["tool"])
+
+
+def _call_tool(run: AgentRun, step: AgentStep, took_over: bool) -> Outcome:
     """Phase B for a tool step. Errors the agent can act on (an unknown tool, bad
-    arguments, a ToolError) go back to the LLM as the call's result. Any other
-    exception propagates, so DTQ retries the step: every registered tool is read-only
-    or idempotent, so running it again is safe."""
+    arguments, a ToolError) go back to the LLM as the call's result.
+
+    Any other exception from a read-only or idempotent tool propagates, so DTQ retries
+    the step. A side-effecting call is never made twice: if an earlier attempt may
+    have made it, or this one raised partway, the outcome is settled by the tool's
+    check, or marked unknown."""
     name, args = step.input["tool"], step.input["args"]
-    t = tools.get(name) if name in run.tools else None
+    t = _tool_for(run, step)
     if t is None:
         return Outcome(StepStatus.FAILED, {"error": f"unknown tool {name!r}; this run's tools: {run.tools}"})
     try:
         kwargs = tools.bind_args(t, args, step.idempotency_key)
     except TypeError as exc:
         return Outcome(StepStatus.FAILED, {"error": f"bad arguments for {name!r}: {exc}"})
+    if took_over and t.effect is Effect.SIDE_EFFECT:
+        return _check(t, step, INTERRUPTED)
     try:
         result = t.fn(**kwargs)
     except tools.ToolError as exc:
         return Outcome(StepStatus.FAILED, {"error": str(exc)})
+    except Exception as exc:
+        if t.effect is not Effect.SIDE_EFFECT:
+            raise
+        log.exception("run %s step %d: side-effecting call %s raised", run.id, step.step_no, name)
+        return _check(t, step, f"the call raised {type(exc).__name__}: {exc}")
+    return Outcome(StepStatus.SUCCEEDED, _json_safe(result))
+
+
+INTERRUPTED = "the worker running this call stopped mid-call"
+
+
+def _check(t: tools.Tool, step: AgentStep, why: str) -> Outcome:
+    """Settle a side-effecting call that may or may not have happened. The tool's check
+    can prove the call happened. It can't prove the call never will (a stalled attempt
+    could still make it), so finding nothing leaves the outcome unknown. If check
+    raises, DTQ retries the step and the next attempt checks again."""
+    if t.check is not None:
+        found = t.check(step.idempotency_key)
+        if found is not None:
+            log.info("run %s step %d: check found the call happened", step.run_id, step.step_no)
+            return Outcome(StepStatus.SUCCEEDED, _json_safe(found))
+        why += "; check found no sign of it"
+    return Outcome(StepStatus.UNKNOWN_OUTCOME, {"error": why})
+
+
+def _json_safe(result: Any) -> Any:
+    """MySQL's JSON type can't hold everything json.dumps accepts (NaN, Infinity), nor
+    arbitrary objects: store such a result's repr instead, as DTQ does."""
     try:
         json.dumps(result, allow_nan=False)
     except (TypeError, ValueError):
-        result = repr(result)
-    return Outcome(StepStatus.SUCCEEDED, result)
+        return repr(result)
+    return result
+
+
+def _pause_for_unknown_outcome(s, run_id: str, step: AgentStep) -> None:
+    """Ask a person about a side-effecting call whose outcome is unknown: add a waiting
+    approval step for it, and pause the run. The caller holds the run row's lock. The
+    turn's other calls keep running; the next turn waits, because this call has no
+    result."""
+    n = s.scalar(select(AgentRun.next_step_no).where(AgentRun.id == run_id).with_for_update())
+    s.execute(update(AgentRun).where(AgentRun.id == run_id).values(next_step_no=n + 1))
+    s.add(AgentStep(run_id=run_id, step_no=n, turn=step.turn, kind=StepKind.APPROVAL, status=StepStatus.WAITING,
+                    call_id=step.call_id,
+                    input={"reason": "unknown_outcome", "step_no": step.step_no,
+                           "calls": [{"call_id": step.call_id, "tool": step.input["tool"],
+                                      "args": step.input["args"]}]}))
+    transition(s, run_id, RunStatus.RUNNING, RunStatus.AWAITING_APPROVAL, paused_at=utcnow())
 
 
 def _record(run: AgentRun, step: AgentStep, attempt: int, outcome: Outcome) -> list[Task] | None:
@@ -234,6 +301,15 @@ def _record(run: AgentRun, step: AgentStep, attempt: int, outcome: Outcome) -> l
                 )
             )
             return _after_llm(s, run, step, outcome)
+        if outcome.status == StepStatus.UNKNOWN_OUTCOME:
+            active = s.execute(
+                update(AgentRun)
+                .where(AgentRun.id == run.id, AgentRun.status.in_([RunStatus.RUNNING, RunStatus.AWAITING_APPROVAL]))
+                .values(turn=AgentRun.turn)
+            )
+            if active.rowcount:
+                _pause_for_unknown_outcome(s, run.id, step)
+            return []
         return _after_tool(s, run, step)
 
 
