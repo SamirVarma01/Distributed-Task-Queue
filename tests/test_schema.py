@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from dtq.agents.demo import SinkEntry
 from dtq.agents.models import AgentRun, AgentStep
 from dtq.db import Task
 
@@ -31,7 +32,7 @@ def schema_columns(table: str) -> dict[str, bool]:
     return {n: "NOT NULL" not in d and "PRIMARY KEY" not in d for n, d in definitions.items()}
 
 
-@pytest.mark.parametrize("model", [Task, AgentRun, AgentStep], ids=lambda m: m.__tablename__)
+@pytest.mark.parametrize("model", [Task, AgentRun, AgentStep, SinkEntry], ids=lambda m: m.__tablename__)
 def test_model_matches_schema_sql(model):
     expected = schema_columns(model.__tablename__)
     actual = {c.name: c.nullable for c in model.__table__.columns}

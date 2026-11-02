@@ -2,7 +2,7 @@ import pytest
 from sqlalchemy import select, update
 
 from dtq import config, registry
-from dtq.agents import executor, llm, scripted
+from dtq.agents import demo, executor, llm, scripted
 from dtq.agents.history import prompt_sha256
 from dtq.agents.models import AgentRun, AgentStep, RunStatus, StepKind, StepStatus
 from dtq.agents.tools import ToolError, tool
@@ -458,13 +458,14 @@ def assert_paused_on_unknown_outcome(run_id: str, step_no: int, tool_name: str):
     steps = get_steps(run_id)
     unknown, approval = steps[step_no], steps[-1]
     assert unknown.status == StepStatus.UNKNOWN_OUTCOME
-    assert (approval.kind, approval.status, approval.turn) == (StepKind.APPROVAL, StepStatus.WAITING, 0)
+    assert (approval.kind, approval.status, approval.turn) == (StepKind.APPROVAL, StepStatus.WAITING, unknown.turn)
     assert approval.input["reason"] == "unknown_outcome" and approval.input["step_no"] == step_no
     assert [c["tool"] for c in approval.input["calls"]] == [tool_name]
     run = get_run(run_id)
     assert run.status == RunStatus.AWAITING_APPROVAL and run.paused_at is not None
-    assert run.calls_remaining == 1  # the turn waits on this call; the next turn hasn't started
-    assert [s.kind for s in steps].count(StepKind.LLM) == 1
+    # The turn waits on this call, so the next turn hasn't started.
+    assert (run.turn, run.calls_remaining) == (unknown.turn, 1)
+    assert not [s for s in steps if s.kind == StepKind.LLM and s.turn > unknown.turn]
 
 
 def test_side_effecting_calls_run_once(client, make_worker):
@@ -599,3 +600,48 @@ def test_a_tool_requiring_approval_is_never_called_without_it(client, make_worke
 
     assert effects == []
     assert get_steps(run_id)[1].output == {"error": "'delete_account' requires approval, which isn't supported yet"}
+
+
+def sink_rows(idempotency_key: str) -> int:
+    with SessionLocal() as s:
+        return len(s.scalars(select(demo.SinkEntry).where(demo.SinkEntry.idempotency_key == idempotency_key)).all())
+
+
+@pytest.mark.parametrize("point", ["after", "before"])
+def test_demo_notification_is_sent_at_most_once_despite_a_crash_and_redelivery(client, make_worker, monkeypatch,
+                                                                             point):
+    """With the real sink. Killed after sending: the step taken over doesn't send
+    again, check finds the notification, and the run finishes (1 row). Killed between
+    the intent and the send: the outcome is unknown and the run waits for a person
+    instead of sending (0 rows). Either way, re-delivering every step's message
+    changes nothing."""
+    run_id = start_run(client, script="demo-notify", tools=("calculator", "send_notification"))
+    real_deliver = demo._deliver
+
+    def deliver_and_die(key, to, text):
+        monkeypatch.setattr(demo, "_deliver", real_deliver)
+        if point == "after":
+            real_deliver(key, to, text)
+        raise Crash
+
+    monkeypatch.setattr(demo, "_deliver", deliver_and_die)
+    with pytest.raises(Crash):
+        drain(make_worker("killed"))  # steps 0-2, then dies in step 3, send_notification
+
+    reclaim_immediately(monkeypatch)
+    survivor = make_worker("survivor")
+    drain(survivor)
+    for step in get_steps(run_id):
+        if step.kind != StepKind.APPROVAL:
+            survivor.broker.enqueue("default", executor.step_task_id(run_id, step.step_no))
+    drain(survivor)
+
+    send = get_steps(run_id)[3]
+    assert (send.input["tool"], send.attempt) == ("send_notification", 2)
+    if point == "after":
+        assert sink_rows(f"{run_id}:3") == 1
+        assert send.status == StepStatus.SUCCEEDED and send.output["sent"] is True
+        assert get_run(run_id).status == RunStatus.SUCCEEDED
+    else:
+        assert sink_rows(f"{run_id}:3") == 0
+        assert_paused_on_unknown_outcome(run_id, 3, "send_notification")

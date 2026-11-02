@@ -20,6 +20,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 from sqlalchemy import delete  # noqa: E402
 
 from dtq import api, config  # noqa: E402
+from dtq.agents.demo import SinkEntry  # noqa: E402
 from dtq.agents.models import AgentRun, AgentStep  # noqa: E402
 from dtq.db import Base, SessionLocal, Task, engine  # noqa: E402
 from dtq.worker import Worker  # noqa: E402
@@ -31,7 +32,7 @@ Base.metadata.create_all(engine)
 def clean_state():
     api.broker.r.flushall()
     with SessionLocal() as s:
-        for model in (Task, AgentStep, AgentRun):
+        for model in (Task, AgentStep, AgentRun, SinkEntry):
             s.execute(delete(model))
         s.commit()
 
