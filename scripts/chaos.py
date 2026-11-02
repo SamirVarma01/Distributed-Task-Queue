@@ -3,10 +3,11 @@
     python scripts/chaos.py --tasks 10000 --workers 5 --kill-interval 5
 
 Resets the Compose stack (docker compose down -v, which deletes its data) with W
-workers and submits N record_execution tasks. Every K seconds it picks a random worker
-container, kills it with SIGKILL (docker kill), records the messages that worker was
-holding (still pending under its consumer name once the kill has landed), and starts it
-again (docker compose up). Each task appends one entry per execution to its own Redis
+workers, each running WORKER_CONCURRENCY tasks at once as set in the environment, and
+submits N record_execution tasks. Every K seconds it picks a random worker container,
+kills it with SIGKILL (docker kill), records the messages that worker was holding (still
+pending under its consumer name once the kill has landed), and starts it again (docker
+compose up). Each task appends one entry per execution to its own Redis
 list, timestamped with Redis's clock, which the kill times also use. When every task has
 reached a terminal state, or --drain-timeout passes, it reports:
 
@@ -59,7 +60,7 @@ def parse_args():
     p.add_argument("--drain-timeout", type=float, default=600,
                    help="seconds to wait for every task to finish before counting the rest as lost")
     p.add_argument("--seed", type=int, help="seed for choosing which worker to kill (default: random)")
-    p.add_argument("--label", help="default: <tasks>t-w<workers>-k<interval>-<timestamp>")
+    p.add_argument("--label", help="default: <tasks>t-w<workers>-c<slots per worker>-k<interval>-<timestamp>")
     p.add_argument("--no-reset", action="store_true", help="use the running stack as is")
     p.add_argument("--api", default="http://localhost:8000")
     p.add_argument("--mysql-url", default="mysql+pymysql://dtq:dtq@localhost:3306/dtq")
@@ -230,13 +231,14 @@ def analyze(task_keys: dict[str, str], statuses: dict[str, tuple[str, int]],
 def main():
     args = parse_args()
     started = datetime.now(timezone.utc)
-    label = args.label or f"{args.tasks}t-w{args.workers}-k{args.kill_interval:g}-{started:%Y%m%d-%H%M%S}"
     seed = args.seed if args.seed is not None else random.randrange(2**32)
 
     if not args.no_reset:
         print(f"resetting stack with {args.workers} workers")
         sh("docker", "compose", "down", "-v", "--remove-orphans", "--timeout", "5")
         sh("docker", "compose", "up", "-d", "--build", "--wait", "--scale", f"worker={args.workers}")
+    slots = bench.worker_slots()
+    label = args.label or f"{args.tasks}t-w{args.workers}-c{slots}-k{args.kill_interval:g}-{started:%Y%m%d-%H%M%S}"
     engine = create_engine(args.mysql_url)
     r = redis.Redis.from_url(args.redis_url, decode_responses=True)
 
@@ -257,7 +259,8 @@ def main():
     result = {
         "label": f"chaos-{label}",
         "date": started.isoformat(timespec="seconds"),
-        "settings": {"tasks": args.tasks, "workers": args.workers, "kill_interval_seconds": args.kill_interval,
+        "settings": {"tasks": args.tasks, "workers": args.workers, "slots": slots,
+                     "kill_interval_seconds": args.kill_interval,
                      "task_ms": args.task_ms, "drain_timeout_seconds": args.drain_timeout, "seed": seed},
         "environment": bench.environment(),
         "duration_seconds": round(duration, 1),

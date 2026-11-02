@@ -32,16 +32,17 @@ def group(items: list[tuple[str, dict]], suffix: str) -> dict[str, list[dict]]:
 
 def results_table(prefixes: list[str]) -> str:
     items = [(p.stem, json.loads(p.read_text())) for prefix in prefixes for p in RESULTS.glob(f"{prefix}*.json")]
-    rows = ["| runs | mode | workers | rate (tasks/s) | throughput (tasks/s) | latency p50 (ms) | latency p95 (ms) "
+    rows = ["| runs | mode | workers | slots per worker | rate (tasks/s) | throughput (tasks/s) | latency p50 (ms) | latency p95 (ms) "
             "| latency p99 (ms) | p95 range (ms) | run p50 / p95 (ms) | submit lag p99 (ms) |",
-            "|---|---|---|---|---|---|---|---|---|---|---|"]
+            "|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for label, runs in group(items, r"-rep\d+").items():
         m = [r["metrics"] for r in runs]
         p95 = [x["latency_ms"]["p95"] for x in m]
         rate = runs[0].get("rate", {}).get("target")
         lag = [r["rate"]["submit_lag_ms"]["p99"] for r in runs if "rate" in r]
         rows.append(
-            f"| {len(runs)} × {label} | {runs[0].get('mode', 'burst')} | {runs[0]['workers']} | {rate or '–'} "
+            f"| {len(runs)} × {label} | {runs[0].get('mode', 'burst')} | {runs[0]['workers']} "
+            f"| {runs[0].get('slots', 1)} | {rate or '–'} "
             f"| {median(x['throughput_per_second'] for x in m):.0f} "
             f"| {median(x['latency_ms']['p50'] for x in m):.0f} | {median(p95):.0f} "
             f"| {median(x['latency_ms']['p99'] for x in m):.0f} | {min(p95):.0f}–{max(p95):.0f} "
