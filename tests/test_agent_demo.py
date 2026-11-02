@@ -102,3 +102,26 @@ def test_demo_approval_script(client, make_worker):
     run = client.get(f"/runs/{run_id}").json()
     assert (run["status"], run["result"]) == ("succeeded", "Published the announcement.")
     assert demo.notification_sent(f"{run_id}:2")["id"] == client.get(f"/runs/{run_id}/steps").json()[2]["output"]["id"]
+
+
+def test_send_notification_latency_is_split_around_the_write(monkeypatch):
+    events = []
+    monkeypatch.setattr(demo, "NOTIFICATION_LATENCY_MS", 100)
+    monkeypatch.setattr(demo.time, "sleep", lambda s: events.append(("sleep", s)))
+    real_deliver = demo._deliver
+    monkeypatch.setattr(demo, "_deliver", lambda *a: events.append(("write",)) or real_deliver(*a))
+
+    demo.send_notification("ops", "hi", idempotency_key="run:9")
+
+    assert events == [("sleep", 0.05), ("write",), ("sleep", 0.05)]
+
+
+@pytest.mark.parametrize("script,turns", [("chaos-agent", 4), ("bench-chain", 3), ("bench-agent", 3)])
+def test_chaos_and_bench_scripts_run_to_completion(client, make_worker, script, turns):
+    tools_used = ["calculator", "echo", "send_notification"]
+    run_id = client.post("/runs", json={"goal": script, "model": {"provider": "scripted", "name": script},
+                                        "tools": tools_used}).json()["id"]
+    drain(make_worker())
+
+    run = client.get(f"/runs/{run_id}").json()
+    assert (run["status"], run["llm_calls"]) == ("succeeded", turns)

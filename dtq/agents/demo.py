@@ -3,6 +3,8 @@ example tasks in dtq/tasks.py."""
 
 import ast
 import operator
+import os
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -107,10 +109,20 @@ def notification_sent(idempotency_key: str) -> dict | None:
     return None if entry_id is None else {"sent": True, "id": entry_id}
 
 
+# Simulated latency of the notification service, in milliseconds. Half is spent before
+# the write and half after, like a real call's request and response, so the chaos test
+# can kill a worker between a call's intent and its effect, or between the effect and
+# its result being recorded. 0 by default.
+NOTIFICATION_LATENCY_MS = int(os.getenv("DEMO_NOTIFICATION_LATENCY_MS", "0"))
+
+
 @tool(effect="side_effect", check=notification_sent)
 def send_notification(to: str, text: str, *, idempotency_key: str) -> dict:
     """Send a notification. Each call sends one, so it is not safe to repeat."""
-    return {"sent": True, "id": _deliver(idempotency_key, to, text)}
+    time.sleep(NOTIFICATION_LATENCY_MS / 2000)
+    entry_id = _deliver(idempotency_key, to, text)
+    time.sleep(NOTIFICATION_LATENCY_MS / 2000)
+    return {"sent": True, "id": entry_id}
 
 
 @tool(effect="side_effect", check=notification_sent, requires_approval=True)
@@ -133,4 +145,30 @@ scripted.script("demo-notify", [  # a read-only call, then a side-effecting one
 scripted.script("demo-approval", [  # a call that waits for a person's approval
     scripted.call_tools(("publish_announcement", {"text": "The queue is up."}), input_tokens=40, output_tokens=15),
     scripted.answer("Published the announcement.", input_tokens=80, output_tokens=8),
+])
+
+# For scripts/agent_chaos.py: four turns, each a simulated 0.3 s LLM call, with two
+# notifications (side effects), a read-only call alongside the first, and one after.
+CHAOS_TURN_SECONDS = 0.3
+scripted.script("chaos-agent", [
+    scripted.call_tools(("calculator", {"expression": "17 * 23"}), ("send_notification", {"to": "ops", "text": "started"}),
+                        input_tokens=100, output_tokens=30, delay_seconds=CHAOS_TURN_SECONDS),
+    scripted.call_tools(("echo", {"text": "checkpoint"}), input_tokens=150, output_tokens=20,
+                        delay_seconds=CHAOS_TURN_SECONDS),
+    scripted.call_tools(("send_notification", {"to": "ops", "text": "finished"}), input_tokens=200, output_tokens=25,
+                        delay_seconds=CHAOS_TURN_SECONDS),
+    scripted.answer("Notified ops twice.", input_tokens=250, output_tokens=10, delay_seconds=CHAOS_TURN_SECONDS),
+])
+
+# For scripts/agent_bench.py, with no latency, so a step's time is the runtime's own.
+# bench-chain's steps run strictly one after another; bench-agent has a parallel turn.
+scripted.script("bench-chain", [
+    scripted.call_tools(("echo", {"text": "a"})),
+    scripted.call_tools(("echo", {"text": "b"})),
+    scripted.answer("done"),
+])
+scripted.script("bench-agent", [
+    scripted.call_tools(("echo", {"text": "a"}), ("echo", {"text": "b"})),
+    scripted.call_tools(("echo", {"text": "c"})),
+    scripted.answer("done"),
 ])
