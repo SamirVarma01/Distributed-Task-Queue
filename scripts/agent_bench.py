@@ -110,7 +110,7 @@ def main():
         sys.exit("On battery power. Plug in for comparable results, or set ALLOW_BATTERY=1.")
     started = datetime.now(timezone.utc)
     label = args.label or f"{started:%Y%m%d-%H%M%S}"
-    engine = create_engine(args.mysql_url)
+    engine = create_engine(args.mysql_url, pool_pre_ping=True)
     medians: dict[int, list[dict]] = {}
 
     for workers in args.workers:
@@ -118,6 +118,7 @@ def main():
             print(f"workers={workers} repeat {rep}: resetting stack")
             chaos.sh("docker", "compose", "down", "-v", "--remove-orphans", "--timeout", "5")
             chaos.sh("docker", "compose", "up", "-d", "--build", "--wait", "--scale", f"worker={workers}")
+            engine.dispose()  # its pooled connections were to the MySQL container that was just removed
             with httpx.Client(base_url=args.api, timeout=60) as client:
                 seq = sequential(client, engine, args.sequential_runs, args.timeout)
                 bur = burst(client, engine, args.runs, args.timeout)
