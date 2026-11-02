@@ -75,7 +75,7 @@ def fetch_report(url: str) -> dict:
 - **Idempotent claims.** A worker starts a task with a conditional `UPDATE ... WHERE status IN ('queued', 'retrying')`, and also allows `'running'` when it reclaimed the message from a dead worker. If a duplicate message arrives, or the task was cancelled, the worker just acks the message and skips it.
 - **Lost submissions.** The API writes the MySQL row first and sets `enqueued_at` once the message is in Redis. If the API crashes in between, a worker's reconciler finds `queued` rows with no `enqueued_at` that are older than `RECONCILE_AFTER_SECONDS` (60s) and re-sends them, keeping any delay (`run_at`).
 - **Bad payloads.** The API rejects a payload that doesn't fit the task's signature (missing or unexpected arguments) with a 400. If one reaches a worker anyway, the task goes `dead` at once instead of being retried.
-- **Slots.** `WORKER_CONCURRENCY` (default 1) sets how many tasks a worker runs at once, each in its own thread. The worker reads, or reclaims, a message only while one of its slots is free, and hands it straight to that slot. A message it held but wasn't working on would get no heartbeat, so another worker could reclaim it and run it a second time. One heartbeat thread refreshes every in-flight message. Threads suit I/O-bound tasks, which release the GIL while they wait; CPU-bound work scales with more worker containers. A worker's MySQL pool keeps up to `WORKER_CONCURRENCY + 1` connections (at least 5), opened as its slots need them, plus SQLAlchemy's 10 overflow. With many replicas and slots, keep the total under MySQL's `max_connections` (151 by default). The design is in [docs/worker-concurrency-design.md](docs/worker-concurrency-design.md).
+- **Slots.** `WORKER_CONCURRENCY` (default 1) sets how many tasks a worker runs at once, each in its own thread. The worker reads, or reclaims, a message only while one of its slots is free, and hands it straight to that slot. A message it held but wasn't working on would get no heartbeat, so another worker could reclaim it and run it a second time. One heartbeat thread refreshes every in-flight message. Threads suit I/O-bound tasks, which release the GIL while they wait; CPU-bound work scales with more worker containers (see [Results](#results)). A worker's MySQL pool keeps up to `WORKER_CONCURRENCY + 1` connections (at least 5), opened as its slots need them, plus SQLAlchemy's 10 overflow. With many replicas and slots, keep the total under MySQL's `max_connections` (151 by default). The design is in [docs/worker-concurrency-design.md](docs/worker-concurrency-design.md).
 - **Ack after the result is saved.** If MySQL or Redis fails while a worker is recording a task's outcome, the message stays pending and is reclaimed once the outage is over. The worker logs the error, backs off (`ERROR_BACKOFF_SECONDS`) and keeps running.
 - **Priority.** `QUEUES=high,default,low` sets the order in which workers check the queues: a task in `low` runs only when `high` and `default` are empty. When every queue is empty, a worker waits on all of them with a blocking `XREADGROUP` (up to `READ_BLOCK_MS`, 100 ms), so a new task is picked up as soon as it arrives. That read returns one message per queue that received one. The worker keeps the highest-priority message and immediately hands the others back to the end of their streams, so it still holds only messages it is working on.
 - **Timeouts.** Python can't stop a thread from outside, so a task with a timeout runs in a child process of the worker. If an attempt overruns, the worker SIGKILLs the child and records the attempt as failed, with the error `TimeoutError: exceeded 30s`. It is retried with backoff and counts toward `max_retries`, like any other failure. The worker's heartbeat keeps running while it waits, so a long task isn't reclaimed. Each slot reuses one child for all such tasks, forked from a forkserver that imported the tasks once, so replacing a killed child is a fork rather than another import. A timeout kills only its own slot's child, and a child that crashes (a segfault, `os._exit`) fails the attempt instead of taking the worker down. Tasks without a timeout still run in the worker process itself. Going through the child costs little: with `DEFAULT_TASK_TIMEOUT_SECONDS=60`, 10,000 `noop` tasks on one worker ran at a median of 290 tasks/s, against 291 without, and the median task's run time went from 1.0 to 1.1 ms. These are 3 alternating pairs from `scripts/ab_compare.sh`, in `bench/results/timeout-w1-*.json`, on an Apple M2 on battery power.
@@ -149,6 +149,43 @@ python scripts/chaos.py --tasks 10000 --workers 5 --kill-interval 5
 - **recovery time:** from a kill until each held message's task ran again.
 
 Results go to `bench/results/chaos-<label>.json`. The script exits non-zero if any task was lost.
+
+## Results
+
+Measured at commit `71f33e4` on an Apple M2 (macOS 26.2, Docker 29.1.3 with 8 CPUs and 3.8 GiB of memory). These runs were on battery power (62% down to 38%), with the machine kept awake. Earlier, the same queue code ran about 10% slower in a session on battery than in one on mains power (`bench/profiles/FINDINGS.md`), so compare these rows with each other rather than with other machines.
+
+**Throughput** (`CONFIGS="1x1 1x5 1x10 5x1 10x1" REPEATS=3 scripts/run_bench_matrix.sh`). 10,000 tasks submitted at once to W workers with S slots each (`WORKER_CONCURRENCY`). Each figure is the median of 3 interleaved runs, with the range in brackets.
+
+| workers × slots | `noop` (tasks/s) | `sleep_ms`, 10 ms (tasks/s) |
+|---|---|---|
+| 1 × 1 | 282 (225–285) | 62 (60–63) |
+| 1 × 5 | 395 (388–448) | 268 (261–277) |
+| 5 × 1 | 595 (554–671) | 311 (309–322) |
+| 1 × 10 | 411 (382–481) | 460 (443–462) |
+| 10 × 1 | 704 (614–710) | 523 (508–537) |
+
+- **For I/O-bound tasks, slots come close to workers.** With 10 ms `sleep_ms` tasks, one worker with 10 slots ran 460 tasks/s, 88% of the 523 that ten single-slot workers ran, from one container instead of ten. With 5 it was 86%. The median task's run time was 12.8 ms with one slot and 13.1 ms with ten, so busy slots barely slowed each other's tasks down.
+- **For `noop` tasks, more workers beat more slots.** One worker with 10 slots ran 411 tasks/s, against 704 for ten workers. A `noop` task is almost all the worker's own Python code and its MySQL and Redis round trips. Ten workers run that code in ten processes, while ten slots share one process and its GIL, which is the likely reason; it wasn't profiled.
+
+From `bench/results/matrix-20261102-123051-*.json` (`noop`) and `matrix-20261102-124316-*.json` (`sleep_ms`); `scripts/bench_report.py results matrix-20261102-123051 matrix-20261102-124316` prints the medians. The machine slept during one repetition of the `sleep_ms` runs. That repetition was set aside, with the reason, in `bench/results/discarded/`, and run again.
+
+**Chaos test** (`scripts/chaos.py --tasks 10000 --workers 5 --kill-interval 5`, 50 ms tasks). Run once with one slot per worker and once with five:
+
+| | 1 slot per worker | 5 slots per worker |
+|---|---|---|
+| kills | 25 | 9 |
+| kills that hit a worker holding messages | 18, holding 1 each | 4, holding 4, 4, 5 and 4 |
+| tasks succeeded / lost | 10,000 / 0 | 10,000 / 0 |
+| tasks that ran twice (none ran more) | 15 | 14 |
+| held messages run again after the kill | 17 of 18 | 17 of 17 |
+| time from a kill to the task running again | p50 32.2 s, p95 35.1 s | p50 33.3 s, p95 33.8 s |
+| submission to the last task finishing | 165 s | 58 s |
+
+- **The missing 18th message.** In the one-slot run, the worker holding it had saved the task's outcome but not yet acked when it was killed. The claim check skipped it, and it never ran again.
+- **The 30 s visibility timeout sets the recovery time.** A held message is reclaimed only once it has gone that long without a heartbeat.
+- **Fewer kills at five slots.** That run drained faster, so it had fewer kills, and its last five hit workers holding nothing.
+
+From `bench/results/chaos-10000t-w5-c1-k5-20261102-182235.json` and `chaos-10000t-w5-c5-k5-20261102-182554.json`.
 
 ## Agent runtime
 
