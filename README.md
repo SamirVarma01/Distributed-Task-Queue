@@ -1,6 +1,6 @@
 # DTQ — Distributed Task Queue
 
-A small distributed task queue: **Redis Streams** move the work, **MySQL** stores each task's status and result, and **Docker Compose** runs the API and any number of workers.
+A small distributed task queue: **Redis Streams** move the work, **MySQL** stores each task's status and result, and **Docker Compose** runs the API and any number of workers. On top of it, a [durable runtime for LLM agents](#agent-runtime) runs each LLM and tool call as a checkpointed task.
 
 ```
 client ──POST /tasks──▶ API ──INSERT──▶ MySQL (tasks table: status, attempts, result)
@@ -84,6 +84,7 @@ The tests run without Docker: fakeredis stands in for Redis and SQLite for MySQL
 ```sh
 python -m venv .venv && .venv/bin/pip install -r requirements.txt -r requirements-dev.txt
 .venv/bin/pytest
+.venv/bin/pytest -m live    # real LLM providers: needs ANTHROPIC_API_KEY and/or OPENAI_API_KEY, and costs money
 ```
 
 ## Benchmarks
@@ -119,9 +120,106 @@ python scripts/chaos.py --tasks 10000 --workers 5 --kill-interval 5
 
 Results go to `bench/results/chaos-<label>.json`. The script exits non-zero if any task was lost.
 
+## Agent runtime
+
+`dtq/agents/` runs LLM agents on top of the queue. A **run** is one agent working toward a goal, with a set of tools and budgets. It advances in **turns**: one LLM call, then the tool calls that response asked for, which run in parallel. Each LLM call, tool call and human approval is a **step**. Every step that does work executes as one DTQ task, and its outcome is saved in MySQL in the same transaction that creates the steps after it. The full design, with the reasoning behind each choice, is in [docs/agent-runtime-design.md](docs/agent-runtime-design.md).
+
+```
+POST /runs ──▶ agent_runs + step 0 ──▶ DTQ task agent_step(run, 0) ──▶ worker
+                                                                         │
+      ┌──────────────────────────────────────────────────────────────────┘
+      ▼
+  A  begin   (1 transaction)  lock the run, check the step's turn is current,
+                              claim the step, fenced on DTQ's attempt number
+  B  execute (no transaction) call the LLM or the tool
+  C  record  (1 transaction)  save the outcome if this attempt still owns the step,
+                              add usage, create the next steps and their DTQ tasks
+      │
+      └──▶ XADD the next steps ──▶ … ──▶ final answer: run succeeded
+```
+
+### Run an agent
+
+```sh
+export ANTHROPIC_API_KEY=...       # and/or OPENAI_API_KEY; a provider is enabled when its key is set
+docker compose up -d --build
+python scripts/demo_agent.py "What is 1234 * 5678? Send the answer to ops."
+python scripts/demo_agent.py --provider scripted --model demo-approval "anything"   # no API key needed
+```
+
+`demo_agent.py` prints each step as it finishes and asks you when the run waits for approval. Or use the API directly:
+
+| Endpoint | Purpose |
+|---|---|
+| `POST /runs` | Start `{goal, model: {provider, name, system, max_output_tokens, effort}, tools, queue, step_max_retries, max_steps, max_tokens, max_cost_micros, max_wall_seconds}` |
+| `GET /runs/{id}` | Status, usage, result or error |
+| `GET /runs/{id}/steps` | Every step: its input, output, status, attempt and usage |
+| `POST /runs/{id}/approve` | Approve a waiting approval step: `{step_no, note, tool_output}` |
+| `POST /runs/{id}/reject` | Reject it, which fails the run: `{step_no, note}` |
+| `POST /runs/{id}/cancel` | Stop the run at the next step boundary |
+
+Providers: `scripted` (a deterministic LLM for tests and benchmarks), `anthropic` (Claude, Messages API) and `openai` (Chat Completions). Tools are functions registered with `@tool(effect=...)` in `dtq/agents/`, with their parameters' JSON schema taken from type hints; the demo tools are `echo`, `calculator`, `http_get`, `send_notification` and `publish_announcement` (which requires approval).
+
+### What it guarantees
+
+Each guarantee below is checked by the tests named after it.
+
+- **A run resumes at the interrupted step after a worker crash, not at step 0, and a recorded step never runs again.** (`test_worker_killed_during_an_llm_call_resumes_at_that_step`, `test_duplicate_step_messages_change_nothing`)
+- **A run can't fork.** One turn is current at a time; the call that brings the turn's count of unfinished calls to zero is the only one that creates the next LLM step; and every step is fenced on DTQ's attempt number, so a stalled attempt can't record over the one that took it over. (`test_parallel_calls_finishing_in_either_order_start_the_next_turn_once`, `test_the_highest_attempt_owns_a_step_while_both_are_running`)
+- **A side-effecting tool call is started at most once.** The step is saved as started before the call; an attempt that takes it over never calls the tool again. It asks the tool's optional `check` whether the call happened, and if nothing can tell, marks the call `unknown_outcome` and pauses the run for a person. A retry they approve keeps the call's idempotency key. (`test_interrupted_call_without_check_is_never_repeated`, `test_demo_notification_is_sent_at_most_once_despite_a_crash_and_redelivery`, `test_approving_an_unknown_outcome_retries_the_call_with_its_key`)
+- **Budgets stop a run.** Before each LLM call, a run that has used up `max_steps` (LLM calls), `max_tokens`, `max_cost_micros` or `max_wall_seconds` moves to `budget_exceeded`; time spent awaiting approval doesn't count toward wall time. (`tests/test_agent_budgets.py`)
+- **Tools marked `requires_approval` wait for a person**, once per turn, before any of the turn's calls run. Approve, reject and cancel each take one transaction that locks the run row first, so when they race, the first to commit wins and the others get a 409. (`tests/test_agent_approvals.py`)
+
+What it doesn't guarantee:
+
+- **Exactly-once execution.** LLM calls, read-only and idempotent tools, and `check` can run more than once after a crash; only one outcome is recorded. An LLM call lost to a crash is billed by the provider but not counted in the run's usage.
+- **That a call marked `unknown_outcome` didn't happen,** or that a tool declared `idempotent` really is. A person decides the first; the runtime trusts the second.
+- **Hard budgets.** A run can overshoot by one LLM call, because usage is known only after it.
+- **Fast recovery.** Resuming after a worker crash waits for the visibility timeout (30 s).
+
+### Results
+
+**Chaos test** (`scripts/agent_chaos.py`). 500 runs of the `chaos-agent` script on 5 workers: each run is four LLM turns (simulated 0.3 s each) with four tool calls, two of them `send_notification` (200 ms of simulated latency, half before its write and half after). A random worker was SIGKILLed every 5 s and restarted. Runs that paused on an unknown outcome were resolved as a person would: approve with the result if the notification was in the sink, retry if not.
+
+| | |
+|---|---|
+| kills | 36 (30 hit a worker holding a step) |
+| runs succeeded / lost | 500 / 0 |
+| runs with an extra LLM step (a fork) | 0 |
+| notifications sent | 1000, exactly 2 per run: **0 duplicate side effects** |
+| calls killed between intent and send | 2: marked `unknown_outcome`, retried |
+| calls killed after sending, before recording | 5: settled by the tool's `check`, not sent again |
+| steps re-executed (wasted work) | 28 of 4004 (21 LLM, 7 tool) |
+| resume after a kill | p50 32.2 s, p95 32.4 s, set by the 30 s visibility timeout |
+
+From `bench/results/agent-chaos-500r-w5-k5-20261102-045244.json`, at commit `c00a1a4`, on an Apple M2 (Docker: 8 CPUs), on battery power with the machine kept awake.
+
+**Benchmark** (`scripts/agent_bench.py`). The scripted LLM and tools take no time, so these are the runtime's own costs. Medians of 3 repeats per worker count:
+
+| workers | step overhead p50 / p95 | runs/s | steps/s |
+|---|---|---|---|
+| 1 | 7.0 / 8.6 ms | 19.2 | 115.5 |
+| 5 | 6.0 / 9.1 ms | 52.3 | 313.6 |
+| 10 | 6.3 / 18.5 ms | 56.4 | 338.2 |
+
+- **Step overhead** is a step's time from being created to its outcome being recorded, over 30 runs (150 steps) run one at a time with nothing else queued. It covers sending the step's message, a worker picking it up, DTQ's claim, the transactions of phases A and C, and DTQ recording the task.
+- **Throughput** is for 500 runs of 6 steps each, submitted at once.
+- **The 5 to 10 worker plateau.** As with the queue itself, throughput barely rises from 5 to 10 workers. Each step costs five MySQL commits, and the queue's plateau was traced to MySQL's per-commit disk flush (`bench/profiles/FINDINGS.md`).
+
+From `bench/results/agent-bench-20261102-052439-*.json`, at commit `3200dfd`, on an Apple M2 (Docker: 8 CPUs). These were measured on battery power (51–54%), with the machine kept awake. Throughput across the repeats agrees within about 6%. Earlier, the same queue code ran about 10% slower in a session on battery than in one on mains power (`bench/profiles/FINDINGS.md`), so treat these absolute numbers as approximate.
+
+### Design decisions
+
+- **One DTQ task per step, not per run.** A crash loses at most the step in flight, steps of a turn run on different workers, and a run waiting for a person holds no worker. The cost is the per-step overhead measured above.
+- **The next steps are created in the transaction that records the outcome.** DTQ's tasks table acts as an outbox: if a worker dies before sending them, DTQ's existing reconciler does.
+- **Steps are fenced on DTQ's own attempt number,** so the queue and the step always agree on who owns it.
+- **"No sign of it" doesn't allow a retry.** A tool's `check` can prove a side effect happened, but not that a stalled attempt won't still make it, so only a person (or an idempotency key on the external system) can make a retry safe.
+- **Anthropic responses are replayed exactly as returned,** including thinking blocks, which the API requires to come back unchanged; the runtime never edits earlier turns.
+
 ## Possible next steps
 
 - Per-task timeouts (run tasks in a subprocess and kill it when time runs out).
 - Several tasks running at once in each worker process (a thread or process pool).
 - Prometheus metrics and a dashboard.
 - Integration tests against real MySQL and Redis (testcontainers), which would also cover `sql/schema.sql`.
+- Agent runtime: prompt caching for Anthropic runs, prices for OpenAI models, and recorded results of the live provider tests.
