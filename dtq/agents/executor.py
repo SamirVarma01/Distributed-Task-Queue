@@ -22,7 +22,7 @@ from sqlalchemy import select, update
 from .. import registry
 from ..broker import Broker
 from ..db import SessionLocal, Task, utcnow
-from . import llm, scripted, tools  # noqa: F401  (scripted registers its provider)
+from . import budgets, llm, scripted, tools  # noqa: F401  (scripted registers its provider)
 from .history import build_messages, prompt_sha256
 from .models import AgentRun, AgentStep, RunStatus, StepKind, StepStatus
 from .states import ALLOWED_FROM, transition
@@ -46,16 +46,26 @@ def llm_step_input(model: dict[str, Any]) -> dict[str, Any]:
 
 
 def new_step(s, run: AgentRun, step_no: int, kind: StepKind, turn: int, input: dict[str, Any],
-             call_id: str | None = None) -> Task:
+             call_id: str | None = None, idempotency_key: str | None = None) -> Task:
     """Add a pending step and its DTQ task to the session. Send the task with send()
-    once the session commits."""
+    once the session commits. A tool step's idempotency key is "<run_id>:<step_no>",
+    unless it retries an earlier call, whose key it keeps."""
+    if kind == StepKind.TOOL and idempotency_key is None:
+        idempotency_key = f"{run.id}:{step_no}"
     s.add(AgentStep(run_id=run.id, step_no=step_no, turn=turn, kind=kind, status=StepStatus.PENDING,
-                    call_id=call_id, input=input,
-                    idempotency_key=f"{run.id}:{step_no}" if kind == StepKind.TOOL else None))
+                    call_id=call_id, input=input, idempotency_key=idempotency_key))
     task = Task(id=step_task_id(run.id, step_no), name=AGENT_STEP, queue=run.queue,
                 payload={"run_id": run.id, "step_no": step_no}, max_retries=run.step_max_retries)
     s.add(task)
     return task
+
+
+def allocate_steps(s, run_id: str, count: int) -> int:
+    """Reserve count step numbers, returning the first. The caller holds the run row's
+    lock, so numbers are handed out in order and never twice."""
+    first = s.scalar(select(AgentRun.next_step_no).where(AgentRun.id == run_id).with_for_update())
+    s.execute(update(AgentRun).where(AgentRun.id == run_id).values(next_step_no=first + count))
+    return first
 
 
 def send(tasks: list[Task]) -> None:
@@ -165,6 +175,12 @@ def _begin(run_id: str, step_no: int, attempt: int) -> tuple[AgentRun, AgentStep
 
         if step.kind != StepKind.LLM:
             return run, step, None, took_over
+        over = budgets.exceeded(run, utcnow())
+        if over:
+            s.execute(update(AgentStep).where(*this_step, AgentStep.attempt == attempt).values(
+                status=StepStatus.FAILED, output={"error": f"not run: budget exceeded ({over})"}, finished_at=utcnow()))
+            transition(s, run_id, RunStatus.RUNNING, RunStatus.BUDGET_EXCEEDED, error=f"budget exceeded: {over}")
+            return f"budget exceeded: {over}"
         steps = s.scalars(select(AgentStep).where(AgentStep.run_id == run_id)).all()
         messages = build_messages(run.goal, steps)
         s.execute(
@@ -186,7 +202,7 @@ def _call_llm(run: AgentRun, step: AgentStep, messages: list) -> Outcome:
         system=run.model["system"],
         messages=messages,
         tools=[llm.ToolSpec(t.name, t.description, t.parameters) for name in run.tools if (t := tools.get(name))],
-        max_output_tokens=run.model["max_output_tokens"],
+        max_output_tokens=budgets.max_output_tokens(run),
         idempotency_key=f"{run.id}:{step.step_no}",
     )
     try:
@@ -199,11 +215,13 @@ def _call_llm(run: AgentRun, step: AgentStep, messages: list) -> Outcome:
                    llm.cost_micros(run.model["name"], response.input_tokens, response.output_tokens))
 
 
+def _run_tool(run: AgentRun, name: str) -> tools.Tool | None:
+    """The tool called name, or None if it isn't one of the run's tools."""
+    return tools.get(name) if name in run.tools else None
+
+
 def _tool_for(run: AgentRun, step: AgentStep) -> tools.Tool | None:
-    """The tool a tool step calls, or None if it isn't one of the run's tools."""
-    if step.kind != StepKind.TOOL or step.input["tool"] not in run.tools:
-        return None
-    return tools.get(step.input["tool"])
+    return _run_tool(run, step.input["tool"]) if step.kind == StepKind.TOOL else None
 
 
 def _call_tool(run: AgentRun, step: AgentStep, took_over: bool) -> Outcome:
@@ -222,8 +240,6 @@ def _call_tool(run: AgentRun, step: AgentStep, took_over: bool) -> Outcome:
         kwargs = tools.bind_args(t, args, step.idempotency_key)
     except TypeError as exc:
         return Outcome(StepStatus.FAILED, {"error": f"bad arguments for {name!r}: {exc}"})
-    if t.requires_approval:  # POST /runs refuses these until approvals exist (Phase 4)
-        return Outcome(StepStatus.FAILED, {"error": f"{name!r} requires approval, which isn't supported yet"})
     if took_over and t.effect is Effect.SIDE_EFFECT:
         return _check(t, step, INTERRUPTED)
     try:
@@ -265,19 +281,21 @@ def _json_safe(result: Any) -> Any:
     return result
 
 
-def _pause_for_unknown_outcome(s, run_id: str, step: AgentStep) -> None:
-    """Ask a person about a side-effecting call whose outcome is unknown: add a waiting
-    approval step for it, and pause the run. The caller holds the run row's lock. The
-    turn's other calls keep running; the next turn waits, because this call has no
-    result."""
-    n = s.scalar(select(AgentRun.next_step_no).where(AgentRun.id == run_id).with_for_update())
-    s.execute(update(AgentRun).where(AgentRun.id == run_id).values(next_step_no=n + 1))
-    s.add(AgentStep(run_id=run_id, step_no=n, turn=step.turn, kind=StepKind.APPROVAL, status=StepStatus.WAITING,
-                    call_id=step.call_id,
-                    input={"reason": "unknown_outcome", "step_no": step.step_no,
-                           "calls": [{"call_id": step.call_id, "tool": step.input["tool"],
-                                      "args": step.input["args"]}]}))
+def _ask_for_approval(s, run_id: str, turn: int, input: dict[str, Any], call_id: str | None = None) -> None:
+    """Add a waiting approval step, and pause the run if it is running. The caller holds
+    the run row's lock. A person decides through POST /runs/{id}/approve or /reject."""
+    n = allocate_steps(s, run_id, 1)
+    s.add(AgentStep(run_id=run_id, step_no=n, turn=turn, kind=StepKind.APPROVAL, status=StepStatus.WAITING,
+                    call_id=call_id, input=input))
     transition(s, run_id, RunStatus.RUNNING, RunStatus.AWAITING_APPROVAL, paused_at=utcnow())
+
+
+def _pause_for_unknown_outcome(s, run_id: str, step: AgentStep) -> None:
+    """Ask a person about a side-effecting call whose outcome is unknown. The turn's
+    other calls keep running; the next turn waits, because this call has no result."""
+    _ask_for_approval(s, run_id, step.turn, call_id=step.call_id, input={
+        "reason": "unknown_outcome", "step_no": step.step_no,
+        "calls": [{"call_id": step.call_id, "tool": step.input["tool"], "args": step.input["args"]}]})
 
 
 def _record(run: AgentRun, step: AgentStep, attempt: int, outcome: Outcome) -> list[Task] | None:
@@ -312,7 +330,7 @@ def _record(run: AgentRun, step: AgentStep, attempt: int, outcome: Outcome) -> l
             if active.rowcount:
                 _pause_for_unknown_outcome(s, run.id, step)
             return []
-        return _after_tool(s, run, step)
+        return call_finished(s, run, step.turn)
 
 
 def _after_llm(s, run: AgentRun, step: AgentStep, outcome: Outcome) -> list[Task]:
@@ -327,35 +345,54 @@ def _after_llm(s, run: AgentRun, step: AgentStep, outcome: Outcome) -> list[Task
     if not calls:
         transition(s, run.id, RunStatus.RUNNING, RunStatus.SUCCEEDED, result=outcome.output["text"])
         return []
-    scheduling = s.execute(
+    gated = [c for c in calls if (t := _run_tool(run, c["name"])) and t.requires_approval]
+    if not gated:
+        return schedule_tools(s, run, step.turn, calls)
+    # One approval for the turn, listing the calls that need it. None of the turn's
+    # calls run until it is approved: approving schedules them all.
+    pausing = s.execute(
         update(AgentRun)
         .where(AgentRun.id == run.id, AgentRun.turn == step.turn, AgentRun.status == RunStatus.RUNNING)
+        .values(turn=AgentRun.turn)
+    )
+    if pausing.rowcount:
+        _ask_for_approval(s, run.id, step.turn, input={
+            "reason": "approval_required",
+            "calls": [{"call_id": c["id"], "tool": c["name"], "args": c["args"]} for c in gated]})
+    return []
+
+
+def schedule_tools(s, run: AgentRun, turn: int, calls: list[dict[str, Any]]) -> list[Task]:
+    """Create a tool step for each of the turn's calls, numbered in the order the LLM
+    listed them, if the run is still running that turn."""
+    scheduling = s.execute(
+        update(AgentRun)
+        .where(AgentRun.id == run.id, AgentRun.turn == turn, AgentRun.status == RunStatus.RUNNING)
         .values(calls_remaining=len(calls))
     )
     if not scheduling.rowcount:
         return []
-    first = s.scalar(select(AgentRun.next_step_no).where(AgentRun.id == run.id).with_for_update())
-    s.execute(update(AgentRun).where(AgentRun.id == run.id).values(next_step_no=first + len(calls)))
-    return [new_step(s, run, first + i, StepKind.TOOL, step.turn, {"tool": c["name"], "args": c["args"]}, c["id"])
+    first = allocate_steps(s, run.id, len(calls))
+    return [new_step(s, run, first + i, StepKind.TOOL, turn, {"tool": c["name"], "args": c["args"]}, c["id"])
             for i, c in enumerate(calls)]
 
 
-def _after_tool(s, run: AgentRun, step: AgentStep) -> list[Task]:
-    """Count this call's result against the turn. The call that takes calls_remaining
-    from 1 to 0 creates the next LLM step, so the next turn starts exactly once."""
+def call_finished(s, run: AgentRun, turn: int) -> list[Task]:
+    """Count a call's result against its turn. The call that takes calls_remaining from
+    1 to 0 creates the next LLM step, so the next turn starts exactly once."""
     last = s.execute(
         update(AgentRun)
-        .where(AgentRun.id == run.id, AgentRun.turn == step.turn, AgentRun.calls_remaining == 1,
+        .where(AgentRun.id == run.id, AgentRun.turn == turn, AgentRun.calls_remaining == 1,
                AgentRun.status == RunStatus.RUNNING)
         .values(calls_remaining=0)
     )
     if not last.rowcount:
         s.execute(
             update(AgentRun)
-            .where(AgentRun.id == run.id, AgentRun.turn == step.turn, AgentRun.calls_remaining > 0)
+            .where(AgentRun.id == run.id, AgentRun.turn == turn, AgentRun.calls_remaining > 0)
             .values(calls_remaining=AgentRun.calls_remaining - 1)
         )
         return []
-    n = s.scalar(select(AgentRun.next_step_no).where(AgentRun.id == run.id).with_for_update())
-    s.execute(update(AgentRun).where(AgentRun.id == run.id).values(turn=n, next_step_no=n + 1))
+    n = allocate_steps(s, run.id, 1)
+    s.execute(update(AgentRun).where(AgentRun.id == run.id).values(turn=n))
     return [new_step(s, run, n, StepKind.LLM, n, llm_step_input(run.model))]

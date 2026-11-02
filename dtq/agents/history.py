@@ -14,11 +14,16 @@ FINISHED = (StepStatus.SUCCEEDED, StepStatus.FAILED)
 
 def call_results(steps: Iterable[AgentStep], turn: int) -> dict[str, tuple[Any, bool]]:
     """{call_id: (output, is_error)} for the turn's tool calls that have a result. A
-    later step for the same call (a retry) supersedes an earlier one."""
+    later step for the same call (a retry) supersedes an earlier one. A call whose
+    outcome was unknown can also get its result from the person who approved it."""
     results = {}
     for step in sorted(steps, key=lambda s: s.step_no):
-        if step.kind == StepKind.TOOL and step.turn == turn and step.status in FINISHED:
+        if step.turn != turn or step.call_id is None:
+            continue
+        if step.kind == StepKind.TOOL and step.status in FINISHED:
             results[step.call_id] = (step.output, step.status == StepStatus.FAILED)
+        elif step.kind == StepKind.APPROVAL and step.status == StepStatus.SUCCEEDED and "tool_output" in step.output:
+            results[step.call_id] = (step.output["tool_output"], False)
     return results
 
 
