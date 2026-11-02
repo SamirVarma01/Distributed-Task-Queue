@@ -1,3 +1,4 @@
+import logging
 import uuid
 from datetime import datetime
 from typing import Any
@@ -9,10 +10,11 @@ from sqlalchemy import select, update
 
 from .. import config
 from ..db import SessionLocal, Task, TaskStatus, utcnow
-from . import executor, llm, tools
+from . import approvals, executor, llm, tools
 from .models import AgentRun, AgentStep, RunStatus, StepKind, StepStatus
 from .states import ALLOWED_FROM, transition
 
+log = logging.getLogger("dtq.agents")
 router = APIRouter(tags=["agent runs"])
 
 
@@ -34,6 +36,17 @@ class SubmitRun(BaseModel):
     max_tokens: int | None = Field(None, ge=1)
     max_cost_micros: int | None = Field(None, ge=1)
     max_wall_seconds: int | None = Field(None, ge=1)
+
+
+class Decision(BaseModel):
+    step_no: int  # the approval step decided on, so a person decides what they looked at
+    note: str | None = None
+
+
+class Approval(Decision):
+    # Only for a call whose outcome is unknown: the call's result, if it did happen.
+    # Leave it out to retry the call instead.
+    tool_output: Any = None
 
 
 class RunOut(BaseModel):
@@ -153,3 +166,28 @@ def cancel_run(run_id: str):
     if not cancelled:
         raise HTTPException(409, f"run is {run.status.value}, cannot cancel")
     return run
+
+
+@router.post("/runs/{run_id}/approve", response_model=RunOut)
+def approve_run(run_id: str, body: Approval):
+    """Approve a waiting approval step. A run with no other approval waiting resumes."""
+    extra = {"tool_output": body.tool_output} if "tool_output" in body.model_fields_set else {}
+    try:
+        created = approvals.approve(run_id, body.step_no, note=body.note, **extra)
+    except approvals.DecisionError as exc:
+        raise HTTPException(exc.status_code, str(exc))
+    try:
+        executor.send(created)
+    except redis.RedisError:
+        log.exception("run %s: approved, but couldn't send the steps it created; the reconciler will", run_id)
+    return get_run(run_id)
+
+
+@router.post("/runs/{run_id}/reject", response_model=RunOut)
+def reject_run(run_id: str, body: Decision):
+    """Reject a waiting approval step, which fails the run."""
+    try:
+        approvals.reject(run_id, body.step_no, note=body.note)
+    except approvals.DecisionError as exc:
+        raise HTTPException(exc.status_code, str(exc))
+    return get_run(run_id)

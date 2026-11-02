@@ -248,18 +248,19 @@ An approval is a step of kind `approval`. It is how a person's decision enters t
 
 - **Tools with `requires_approval`.** If an LLM response requests any of them, C creates one approval step for the turn, listing those calls, and pauses the run. None of the turn's calls run until it is approved, including calls that don't need approval. One decision per turn is enough, because rejecting fails the run anyway (decision 8).
 - **Unknown outcomes.** Each call whose outcome is unknown gets its own approval step. The turn's other calls keep running and recording while the run waits (decision 9). The next turn can't start until every call has a result.
-- **`POST /runs/{id}/approve`** takes the approval step's `step_no`, so a person approves exactly what they looked at. In one transaction, it marks that step `succeeded` and then:
+- **`POST /runs/{id}/approve`** takes `{"step_no", "note", "tool_output"}`. `step_no` names the approval step, so a person approves exactly what they looked at, and `note` is optional. In one transaction, it marks that step `succeeded`, with the decision as its output, and then:
   - **for a turn's approval,** schedules the turn's tool steps;
-  - **for an unknown outcome, with no body,** means "it didn't happen, try again". It creates a new tool step for the same call, with the same key;
+  - **for an unknown outcome, without `tool_output`,** means "it didn't happen, try again". It creates a new tool step for the same call, with the same key;
   - **for an unknown outcome, with `{"tool_output": ...}`,** means "it happened, and this was the result". That output becomes the call's result. It decrements `calls_remaining`, and if that was the turn's last call, it creates the next LLM step.
 
   If no other approval step is waiting, the run returns to `running`, and the time since `paused_at` is added to `paused_seconds`. New tasks are XADDed after the commit, as in C.
-- **`POST /runs/{id}/reject`** records the decision and moves the run to `failed`.
+- **`POST /runs/{id}/reject`** takes `{"step_no", "note"}`, records the decision, and moves the run to `failed`.
 - **`POST /runs/{id}/cancel`** moves a queued, running or awaiting_approval run to `cancelled`.
   - Steps already executing finish and record their output and usage, but schedule nothing.
   - Messages already queued find the run cancelled at A and do nothing.
   - So a cancel takes effect at the next step boundary, and never interrupts a tool mid-call.
-- **Races** between approve, reject and cancel, or a double approve, are settled by the conditional updates. The first to commit wins, and the others get a 409.
+- **Races** between approve, reject and cancel, or a double approve, are settled by locking. Each decision is one transaction that first locks the run row and checks the run is `awaiting_approval`, then checks the step is still `waiting`. The first to commit wins, and the others get a 409. The step check matters when another approval step keeps the run paused, because only it stops a second approval of the same step.
+- **Errors:** an unknown run is a 404. A run not awaiting approval, or a step that isn't waiting, is a 409. `tool_output` for anything but an unknown outcome is a 400.
 
 ## 9. Budgets
 
