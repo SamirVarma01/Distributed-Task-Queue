@@ -21,7 +21,7 @@ ALLOWED_FROM: dict[RunStatus, frozenset[RunStatus]] = {
     S.RUNNING: frozenset({S.QUEUED, S.AWAITING_APPROVAL}),
     S.AWAITING_APPROVAL: frozenset({S.RUNNING}),
     S.SUCCEEDED: frozenset({S.RUNNING}),
-    S.FAILED: frozenset({S.RUNNING, S.AWAITING_APPROVAL}),
+    S.FAILED: frozenset({S.QUEUED, S.RUNNING, S.AWAITING_APPROVAL}),
     S.CANCELLED: frozenset({S.QUEUED, S.RUNNING, S.AWAITING_APPROVAL}),
     S.BUDGET_EXCEEDED: frozenset({S.RUNNING}),
 }
