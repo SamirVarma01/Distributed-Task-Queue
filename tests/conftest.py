@@ -52,8 +52,8 @@ def make_worker():
     at the end, stopping its heartbeat thread and child processes."""
     workers = []
 
-    def make(name: str = "w1") -> Worker:
-        w = Worker()
+    def make(name: str = "w1", concurrency: int = 1) -> Worker:
+        w = Worker(concurrency)
         w.id = name
         for q in config.QUEUES:
             w.broker.ensure_group(q)

@@ -8,6 +8,9 @@ QUEUES = [q.strip() for q in os.getenv("QUEUES", "default").split(",") if q.stri
 
 CONSUMER_GROUP = "dtq-workers"
 
+# How many tasks one worker process runs at once, each in its own thread (a slot).
+WORKER_CONCURRENCY = int(os.getenv("WORKER_CONCURRENCY", "1"))
+
 # A message unacked for this long is assumed to belong to a dead worker and is reclaimed.
 VISIBILITY_TIMEOUT_MS = int(os.getenv("VISIBILITY_TIMEOUT_MS", "30000"))
 # Live workers refresh their in-flight message this often so it is never reclaimed.

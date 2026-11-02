@@ -6,6 +6,7 @@ import socket
 import threading
 import time
 import traceback
+from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 
 from sqlalchemy import select, update
@@ -65,15 +66,39 @@ class Heartbeat(threading.Thread):
 
 
 class Worker:
-    def __init__(self):
+    """Runs up to `concurrency` tasks at once, each in a slot thread. One dispatcher
+    (run()'s loop) takes a message only while a slot is free and hands it straight to
+    that slot, so the worker never holds a message nobody is working on. See
+    docs/worker-concurrency-design.md."""
+
+    def __init__(self, concurrency: int | None = None):
         self.id = f"{socket.gethostname()}-{os.getpid()}"
         self.broker = Broker()
-        self.task_process = TaskProcess()  # runs tasks that have a timeout; started when first needed
         self.queues = config.QUEUES
+        self.concurrency = config.WORKER_CONCURRENCY if concurrency is None else concurrency
+        if self.concurrency < 1:
+            raise ValueError(f"concurrency must be at least 1, not {self.concurrency}")
         self.stopping = False
         self.heartbeat = Heartbeat(self.broker)
+        self._slots = threading.BoundedSemaphore(self.concurrency)
+        self._pool = ThreadPoolExecutor(self.concurrency, thread_name_prefix="slot")
+        self._local = threading.local()
+        self._task_processes: list[TaskProcess] = []
+        self._lock = threading.Lock()
         self._last_reclaim = 0.0
+        self._reclaiming = False
         self._last_reconcile = 0.0
+
+    @property
+    def task_process(self) -> TaskProcess:
+        """The calling slot's child process for tasks with a timeout. Each slot thread
+        has its own, started the first time that slot runs such a task."""
+        process = getattr(self._local, "task_process", None)
+        if process is None:
+            process = self._local.task_process = TaskProcess()
+            with self._lock:
+                self._task_processes.append(process)
+        return process
 
     def run(self):
         signal.signal(signal.SIGTERM, self._request_stop)
@@ -81,54 +106,81 @@ class Worker:
         wait_for_db()
         for q in self.queues:
             self.broker.ensure_group(q)
-        log.info("worker %s consuming %s", self.id, self.queues)
+        log.info("worker %s consuming %s with %d slot(s)", self.id, self.queues, self.concurrency)
 
         try:
             while not self.stopping:
+                if not self._slots.acquire(timeout=config.READ_BLOCK_MS / 1000):
+                    continue  # every slot is busy
                 try:
-                    self.step(block_ms=config.READ_BLOCK_MS)
+                    msg = self._next(block_ms=config.READ_BLOCK_MS)
                 except Exception:
-                    # MySQL or Redis is unavailable. Any message we held stays unacked and
-                    # is reclaimed once the outage is over, so back off and keep going.
+                    self._slots.release()
+                    # MySQL or Redis is unavailable. Back off and keep going.
                     log.exception("worker loop failed; retrying in %.0fs", config.ERROR_BACKOFF_SECONDS)
                     time.sleep(config.ERROR_BACKOFF_SECONDS)
+                    continue
+                if msg is None:
+                    self._slots.release()
+                else:
+                    self._pool.submit(self._work, msg)
         finally:
+            self._pool.shutdown(wait=True)  # graceful shutdown: let the in-flight tasks finish
             self.close()
         log.info("worker %s stopped", self.id)
 
+    def _work(self, msg: tuple) -> None:
+        """A slot runs one message, then frees itself."""
+        try:
+            self.handle(*msg)
+        except Exception:
+            # MySQL or Redis failed mid-task. The message stays unacked and is reclaimed
+            # once the outage is over; back off before this slot takes another.
+            log.exception("slot failed; retrying in %.0fs", config.ERROR_BACKOFF_SECONDS)
+            time.sleep(config.ERROR_BACKOFF_SECONDS)
+        finally:
+            self._slots.release()
+
     def close(self) -> None:
-        """Stop the heartbeat and the child process."""
+        """Stop the heartbeat and every slot's child process."""
         self.heartbeat.stop()
-        self.task_process.stop()
+        with self._lock:
+            processes = list(self._task_processes)
+        for process in processes:
+            process.stop()
 
     def step(self, block_ms: int = 0) -> bool:
-        """One loop iteration: promote due retries, re-send lost tasks, reclaim stale
-        messages, and run the next task, waiting up to block_ms for one if the queues
-        are empty. Returns False if there was no new task to run."""
-        self.broker.promote_due()
-        if time.monotonic() - self._last_reconcile > config.RECONCILE_INTERVAL_SECONDS:
-            self._reconcile()
-        if time.monotonic() - self._last_reclaim > config.RECLAIM_INTERVAL_SECONDS:
-            self._reclaim_stale()
-        msg = self.broker.read(self.id, self.queues, block_ms)
+        """Take the next message, as run()'s loop does, and run it in the calling
+        thread, waiting up to block_ms for one if the queues are empty. Returns False if
+        there was none. Tests drive workers with this instead of run()."""
+        msg = self._next(block_ms)
         if msg is None:
             return False
         self.handle(*msg)
         return True
 
-    def _request_stop(self, *_):
-        log.info("shutdown requested; finishing current task")
-        self.stopping = True
-
-    def _reclaim_stale(self):
-        self._last_reclaim = time.monotonic()
-        for q in self.queues:
-            while not self.stopping:
+    def _next(self, block_ms: int) -> tuple | None:
+        """Promote due retries, re-send lost tasks, and return the next message to work
+        on: a stale one reclaimed from a dead worker, or else a new one, waiting up to
+        block_ms. Called only when a slot is free: the message is now this worker's."""
+        self.broker.promote_due()
+        if time.monotonic() - self._last_reconcile > config.RECONCILE_INTERVAL_SECONDS:
+            self._reconcile()
+        if not self._reclaiming and time.monotonic() - self._last_reclaim > config.RECLAIM_INTERVAL_SECONDS:
+            self._reclaiming, self._last_reclaim = True, time.monotonic()
+        if self._reclaiming:  # a pass takes stale messages one per call until none are left
+            for q in self.queues:
                 msg = self.broker.reclaim(self.id, q, config.VISIBILITY_TIMEOUT_MS)
-                if msg is None:
-                    break
-                log.warning("reclaimed %s from a dead worker", msg[2].get("task_id"))
-                self.handle(*msg, reclaimed=True)
+                if msg is not None:
+                    log.warning("reclaimed %s from a dead worker", msg[2].get("task_id"))
+                    return (*msg, True)
+            self._reclaiming = False
+        msg = self.broker.read(self.id, self.queues, block_ms)
+        return None if msg is None else (*msg, False)
+
+    def _request_stop(self, *_):
+        log.info("shutdown requested; finishing in-flight tasks")
+        self.stopping = True
 
     def _reconcile(self):
         """Re-send queued tasks whose message never reached Redis (the API crashed

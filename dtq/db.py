@@ -63,7 +63,10 @@ class Task(Base):
 # is returned, even right after a COMMIT. Every connection here is used through a
 # Session or Connection, which already ends its transaction (commit, or rollback on
 # close or error) before returning it, so that ROLLBACK is a wasted round trip.
-engine = create_engine(config.MYSQL_URL, pool_pre_ping=True, pool_recycle=1800, pool_reset_on_return=None)
+# pool_size: SQLAlchemy's default of 5 (plus 10 overflow) would make a worker with more
+# slots wait for connections. Connections are opened only as they are needed.
+engine = create_engine(config.MYSQL_URL, pool_pre_ping=True, pool_recycle=1800, pool_reset_on_return=None,
+                       pool_size=max(5, config.WORKER_CONCURRENCY + 1))
 SessionLocal = sessionmaker(engine, expire_on_commit=False)
 
 
