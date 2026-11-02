@@ -26,9 +26,7 @@ def fast_config(monkeypatch):
 
 @pytest.fixture
 def worker(make_worker):
-    w = make_worker()
-    yield w
-    w.task_process.stop()
+    return make_worker()
 
 
 def alive(pid: int) -> bool:

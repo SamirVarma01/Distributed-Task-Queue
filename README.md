@@ -20,6 +20,7 @@ client ──POST /tasks──▶ API ──INSERT──▶ MySQL (tasks table: 
 ```sh
 docker compose up --build              # mysql, redis, api, 3 workers
 docker compose up --scale worker=10    # change the worker count
+WORKER_CONCURRENCY=4 docker compose up # each worker runs up to 4 tasks at once
 python scripts/demo.py 100             # submit 100 random tasks and watch them finish
 ```
 
@@ -74,11 +75,11 @@ def fetch_report(url: str) -> dict:
 - **Idempotent claims.** A worker starts a task with a conditional `UPDATE ... WHERE status IN ('queued', 'retrying')`, and also allows `'running'` when it reclaimed the message from a dead worker. If a duplicate message arrives, or the task was cancelled, the worker just acks the message and skips it.
 - **Lost submissions.** The API writes the MySQL row first and sets `enqueued_at` once the message is in Redis. If the API crashes in between, a worker's reconciler finds `queued` rows with no `enqueued_at` that are older than `RECONCILE_AFTER_SECONDS` (60s) and re-sends them, keeping any delay (`run_at`).
 - **Bad payloads.** The API rejects a payload that doesn't fit the task's signature (missing or unexpected arguments) with a 400. If one reaches a worker anyway, the task goes `dead` at once instead of being retried.
-- **One message at a time.** A worker reads (and reclaims) a single message and finishes it before taking another. A message it held but wasn't working on would get no heartbeat, so another worker could reclaim it and run it a second time.
+- **Slots.** `WORKER_CONCURRENCY` (default 1) sets how many tasks a worker runs at once, each in its own thread. The worker reads, or reclaims, a message only while one of its slots is free, and hands it straight to that slot. A message it held but wasn't working on would get no heartbeat, so another worker could reclaim it and run it a second time. One heartbeat thread refreshes every in-flight message. Threads suit I/O-bound tasks, which release the GIL while they wait; CPU-bound work scales with more worker containers. A worker's MySQL pool keeps up to `WORKER_CONCURRENCY + 1` connections (at least 5), opened as its slots need them, plus SQLAlchemy's 10 overflow. With many replicas and slots, keep the total under MySQL's `max_connections` (151 by default). The design is in [docs/worker-concurrency-design.md](docs/worker-concurrency-design.md).
 - **Ack after the result is saved.** If MySQL or Redis fails while a worker is recording a task's outcome, the message stays pending and is reclaimed once the outage is over. The worker logs the error, backs off (`ERROR_BACKOFF_SECONDS`) and keeps running.
-- **Priority.** `QUEUES=high,default,low` sets the order in which workers check the queues: a task in `low` runs only when `high` and `default` are empty. When every queue is empty, a worker waits on all of them with a blocking `XREADGROUP` (up to `READ_BLOCK_MS`, 100 ms), so a new task is picked up as soon as it arrives. That read returns one message per queue that received one. The worker keeps the highest-priority message and immediately hands the others back to the end of their streams, so it still holds only the message it is working on.
-- **Timeouts.** Python can't stop a thread from outside, so a task with a timeout runs in a child process of the worker. If an attempt overruns, the worker SIGKILLs the child and records the attempt as failed, with the error `TimeoutError: exceeded 30s`. It is retried with backoff and counts toward `max_retries`, like any other failure. The worker's heartbeat keeps running while it waits, so a long task isn't reclaimed. Each worker reuses one child for all such tasks, forked from a forkserver that imported the tasks once, so replacing a killed child is a fork rather than another import. A child that crashes (a segfault, `os._exit`) fails the attempt instead of taking the worker down. Tasks without a timeout still run in the worker process itself. Going through the child costs little: with `DEFAULT_TASK_TIMEOUT_SECONDS=60`, 10,000 `noop` tasks on one worker ran at a median of 290 tasks/s, against 291 without, and the median task's run time went from 1.0 to 1.1 ms. These are 3 alternating pairs from `scripts/ab_compare.sh`, in `bench/results/timeout-w1-*.json`, on an Apple M2 on battery power.
-- **Graceful shutdown.** On SIGTERM a worker finishes its current task before it exits (`stop_grace_period: 30s`).
+- **Priority.** `QUEUES=high,default,low` sets the order in which workers check the queues: a task in `low` runs only when `high` and `default` are empty. When every queue is empty, a worker waits on all of them with a blocking `XREADGROUP` (up to `READ_BLOCK_MS`, 100 ms), so a new task is picked up as soon as it arrives. That read returns one message per queue that received one. The worker keeps the highest-priority message and immediately hands the others back to the end of their streams, so it still holds only messages it is working on.
+- **Timeouts.** Python can't stop a thread from outside, so a task with a timeout runs in a child process of the worker. If an attempt overruns, the worker SIGKILLs the child and records the attempt as failed, with the error `TimeoutError: exceeded 30s`. It is retried with backoff and counts toward `max_retries`, like any other failure. The worker's heartbeat keeps running while it waits, so a long task isn't reclaimed. Each slot reuses one child for all such tasks, forked from a forkserver that imported the tasks once, so replacing a killed child is a fork rather than another import. A timeout kills only its own slot's child, and a child that crashes (a segfault, `os._exit`) fails the attempt instead of taking the worker down. Tasks without a timeout still run in the worker process itself. Going through the child costs little: with `DEFAULT_TASK_TIMEOUT_SECONDS=60`, 10,000 `noop` tasks on one worker ran at a median of 290 tasks/s, against 291 without, and the median task's run time went from 1.0 to 1.1 ms. These are 3 alternating pairs from `scripts/ab_compare.sh`, in `bench/results/timeout-w1-*.json`, on an Apple M2 on battery power.
+- **Graceful shutdown.** On SIGTERM a worker stops taking messages and finishes its in-flight tasks before it exits (`stop_grace_period: 30s`). A task still running when the grace period ends is killed, and its message is reclaimed after the visibility timeout.
 
 **Delivery is at-least-once.** A worker can crash after a task's side effects happen but before it records the result. When that happens the task runs again, so tasks should be idempotent.
 
@@ -109,6 +110,7 @@ The integration tests cover:
 - a duplicate message, and two workers claiming the same task at the same moment;
 - the reconciler sending a task after the API crashed between saving it and sending it;
 - a worker process killed with SIGKILL mid-task, whose message another worker process reclaims with `XAUTOCLAIM`;
+- a worker process running three tasks at once (`WORKER_CONCURRENCY=3`), killed with SIGKILL: another worker process reclaims and finishes all three;
 - in real worker processes with `DEFAULT_TASK_TIMEOUT_SECONDS` set, a task that overruns it, and an agent run whose steps all run in the worker's child process;
 - the parallel tool calls of 30 agent runs on four workers. SQLite locks the whole database on every write, so only here do they really race.
 
@@ -245,6 +247,5 @@ From `bench/results/agent-bench-20261102-052439-*.json`, at commit `3200dfd`, on
 
 ## Possible next steps
 
-- Several tasks running at once in each worker process (a thread or process pool).
 - Prometheus metrics and a dashboard.
 - Agent runtime: prompt caching for Anthropic runs, prices for OpenAI models, and recorded results of the live provider tests.
